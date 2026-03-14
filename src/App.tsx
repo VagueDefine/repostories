@@ -195,15 +195,70 @@ export default function App() {
       简介: ${profile.bio}
       
       收藏夹内容 (共 ${bookmarks.length} 条):
-      ${bookmarks.map(b => `- [${b.category}] ${b.title}: ${b.url} ${b.description ? `(描述: ${b.description})` : ''}`).join('\n')}
+      ${bookmarks.map(b => `- [${b.type === 'folder' ? '文件夹' : '链接'}] ${b.title} (ID: ${b.id}, URL: ${b.url}, 分类: ${b.category}, 父文件夹ID: ${b.parentId || 'root'})`).join('\n')}
       
       个人主页笔记内容:
       ${markdownContent}
     `;
 
     const response = await chatWithAI(activeAIModel, userMsg, context);
-    setMessages(prev => [...prev, { role: 'ai', content: response }]);
+    
+    if (response.functionCalls && response.functionCalls.length > 0) {
+      executeAIFunctionCalls(response.functionCalls);
+    }
+
+    setMessages(prev => [...prev, { role: 'ai', content: response.text || (response.functionCalls ? "已完成操作。" : "AI 未返回内容") }]);
     setIsAILoading(false);
+  };
+
+  const executeAIFunctionCalls = (calls: { name: string, args: any }[]) => {
+    setBookmarks(prev => {
+      let newBookmarks = [...prev];
+      let changed = false;
+
+      calls.forEach(call => {
+        switch (call.name) {
+          case 'createFolder':
+            const folder: Bookmark = {
+              id: call.args.id || Math.random().toString(36).substr(2, 9),
+              title: call.args.title,
+              url: '',
+              category: '文件夹',
+              description: 'AI 自动创建',
+              createdAt: Date.now(),
+              type: 'folder',
+              parentId: (call.args.parentId === 'root' || !call.args.parentId) ? undefined : call.args.parentId
+            };
+            newBookmarks.unshift(folder);
+            changed = true;
+            break;
+          case 'moveBookmarks':
+            newBookmarks = newBookmarks.map(b => {
+              if (call.args.bookmarkIds.includes(b.id)) {
+                return { ...b, parentId: (call.args.targetFolderId === 'root' || !call.args.targetFolderId) ? undefined : call.args.targetFolderId };
+              }
+              return b;
+            });
+            changed = true;
+            break;
+          case 'updateBookmarksCategory':
+            newBookmarks = newBookmarks.map(b => {
+              if (call.args.bookmarkIds.includes(b.id)) {
+                return { ...b, category: call.args.category };
+              }
+              return b;
+            });
+            changed = true;
+            break;
+          case 'deleteBookmarks':
+            newBookmarks = newBookmarks.filter(b => !call.args.bookmarkIds.includes(b.id));
+            changed = true;
+            break;
+        }
+      });
+
+      return changed ? newBookmarks : prev;
+    });
   };
 
   const handleAnalyzeUrl = async () => {
