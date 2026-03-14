@@ -6,7 +6,7 @@ import {
   Cloud, Sparkles, ChevronRight, LayoutGrid,
   Info, LogOut, Menu, X, FileText, Download,
   Send, Bot, Key, Link as LinkIcon, Edit3,
-  ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked
+  ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -14,6 +14,7 @@ import Markdown from 'react-markdown';
 import { Bookmark, TabType, UserProfile, StorageConfig, AppData, AIModelConfig } from './types';
 import * as storage from './services/storage';
 import { chatWithAI, analyzeUrl } from './services/ai';
+import { parseBookmarkHtml } from './services/bookmarkParser';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -252,6 +253,28 @@ export default function App() {
     }
   };
 
+  const handleImportHtml = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const html = event.target?.result as string;
+      if (html) {
+        const imported = parseBookmarkHtml(html);
+        if (imported.length > 0) {
+          setBookmarks(prev => [...imported, ...prev]);
+          alert(`成功导入 ${imported.length} 条内容！`);
+        } else {
+          alert('未能识别有效的书签内容，请确保文件格式正确。');
+        }
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    e.target.value = '';
+  };
+
   const downloadMd = () => {
     const data: AppData = { bookmarks, profile, content: markdownContent };
     const blob = new Blob([storage.stringifyToMd(data)], { type: 'text/markdown' });
@@ -345,6 +368,20 @@ export default function App() {
                   <p className="text-slate-500">数据将以 Markdown 格式存储，透明且安全。</p>
                 </div>
                 <div className="flex gap-3">
+                  <input 
+                    type="file" 
+                    id="html-import" 
+                    accept=".html" 
+                    className="hidden" 
+                    onChange={handleImportHtml} 
+                  />
+                  <button 
+                    onClick={() => document.getElementById('html-import')?.click()}
+                    className="btn-secondary flex items-center gap-2"
+                  >
+                    <Upload size={18} />
+                    <span>导入 HTML</span>
+                  </button>
                   <button 
                     onClick={downloadMd}
                     className="btn-secondary flex items-center gap-2"
