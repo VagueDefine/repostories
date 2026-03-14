@@ -82,7 +82,7 @@ export default function App() {
       const matchesSearch = b.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                            b.url.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = selectedCategory === '全部' || b.category === selectedCategory;
-      const matchesFolder = searchQuery ? true : (b.parentId === (currentFolderId || undefined));
+      const matchesFolder = searchQuery ? true : ((b.parentId || null) === (currentFolderId || null));
       return matchesSearch && matchesCategory && matchesFolder;
     });
   }, [bookmarks, searchQuery, selectedCategory, currentFolderId]);
@@ -109,7 +109,7 @@ export default function App() {
       description: newBookmark.description?.trim(),
       createdAt: Date.now(),
       type: newBookmark.type || 'link',
-      parentId: newBookmark.parentId || currentFolderId || undefined
+      parentId: newBookmark.parentId || undefined
     };
     
     setBookmarks([bookmark, ...bookmarks]);
@@ -189,9 +189,15 @@ export default function App() {
     setIsAILoading(true);
 
     const context = `
-      User Profile: ${profile.name} - ${profile.bio}
-      Bookmarks: ${bookmarks.map(b => `${b.title} (${b.url})`).join(', ')}
-      Notes: ${markdownContent}
+      用户信息:
+      姓名: ${profile.name}
+      简介: ${profile.bio}
+      
+      收藏夹内容 (共 ${bookmarks.length} 条):
+      ${bookmarks.map(b => `- [${b.category}] ${b.title}: ${b.url} ${b.description ? `(描述: ${b.description})` : ''}`).join('\n')}
+      
+      个人主页笔记内容:
+      ${markdownContent}
     `;
 
     const response = await chatWithAI(activeAIModel, userMsg, context);
@@ -348,7 +354,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder' });
+                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
                     className="btn-secondary flex items-center gap-2"
@@ -358,7 +364,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link' });
+                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
                     className="btn-primary flex items-center gap-2"
@@ -833,7 +839,7 @@ export default function App() {
                   />
                   <select 
                     className="input-field"
-                    value={newBookmark.parentId || currentFolderId || ''}
+                    value={newBookmark.parentId || ''}
                     onChange={(e) => setNewBookmark({ ...newBookmark, parentId: e.target.value || undefined })}
                   >
                     <option value="">根目录</option>

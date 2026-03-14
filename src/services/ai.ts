@@ -41,7 +41,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `You are a helpful assistant. Here is some context about the user's ZenSpace (bookmarks and profile):\n${context}` },
+              { role: "system", content: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。请根据以下上下文信息回答用户的问题：\n${context}` },
               { role: "user", content: message }
             ]
           }
@@ -68,7 +68,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           { text: message }
         ],
         config: {
-          systemInstruction: "You are a helpful assistant for ZenSpace. Use the provided context to help the user."
+          systemInstruction: "你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。请根据提供的上下文信息（Context）来回答用户的问题，帮助用户管理和查找他们的收藏内容。"
         }
       });
       return response.text || "AI 未返回内容";
