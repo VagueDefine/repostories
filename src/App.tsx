@@ -1039,6 +1039,18 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
 
 function BookmarkCard({ bookmark, onDelete, onOpenFolder }: { bookmark: Bookmark; onDelete: () => void; onOpenFolder: () => void }) {
   const isFolder = bookmark.type === 'folder';
+  const [iconError, setIconError] = React.useState(false);
+
+  const getFaviconUrl = (url: string) => {
+    try {
+      const domain = new URL(url).hostname;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const favicon = !isFolder ? getFaviconUrl(bookmark.url) : null;
   
   return (
     <motion.div 
@@ -1057,10 +1069,24 @@ function BookmarkCard({ bookmark, onDelete, onOpenFolder }: { bookmark: Bookmark
       </button>
       <div className="flex items-start gap-4 mb-4">
         <div className={cn(
-          "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors",
+          "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors overflow-hidden",
           isFolder ? "bg-indigo-100 text-indigo-600" : "bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
         )}>
-          {isFolder ? <Folder size={24} /> : <Globe size={24} />}
+          {isFolder ? (
+            <Folder size={24} />
+          ) : (
+            favicon && !iconError ? (
+              <img 
+                src={favicon} 
+                alt="" 
+                className="w-full h-full object-cover"
+                onError={() => setIconError(true)}
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <Globe size={24} />
+            )
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-lg truncate text-slate-800 group-hover:text-indigo-600 transition-colors">{bookmark.title}</h3>
