@@ -72,7 +72,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
       };
     }
     if (message.toLowerCase().includes('你好') || message.toLowerCase().includes('hello')) {
-      return { text: "你好！我是 ZenSpace 的智能助手。我可以帮你管理书签、整理分类，或者回答关于你收藏内容的问题。" };
+      return { text: "你好！我是 WangLi 的智能助手。我可以帮你管理书签、整理分类，或者回答关于你收藏内容的问题。" };
     }
     return { text: `这是一个演示响应。你刚才说的是: "${message}"。在演示模式下，我无法访问真实的 AI 模型，但你可以验证聊天界面的交互功能。` };
   }
@@ -105,7 +105,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}` },
+              { role: "system", content: `你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}` },
               { role: "user", content: message }
             ],
             tools: bookmarkTools.map(tool => ({
@@ -150,7 +150,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           { text: message }
         ],
         config: {
-          systemInstruction: "你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}",
+          systemInstruction: "你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}",
           tools: [{ functionDeclarations: bookmarkTools }]
         }
       });

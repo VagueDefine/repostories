@@ -1,7 +1,6 @@
 import yaml from 'js-yaml';
 import { Bookmark, StorageConfig, UserProfile, AppData } from '../types';
 
-const STORAGE_KEY = 'zenspace_data_md';
 const CONFIG_KEY = 'zenspace_config';
 
 export const defaultProfile: UserProfile = {
@@ -110,7 +109,7 @@ export const syncToGithub = async (config: StorageConfig, data: AppData) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        message: 'Sync to Markdown via ZenSpace',
+        message: 'Sync to Markdown via WangLi',
         content: btoa(unescape(encodeURIComponent(mdContent))),
         branch,
         sha

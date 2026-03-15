@@ -185,6 +185,7 @@ export default function App() {
   // Save to local cache whenever data changes
   useEffect(() => {
     const data: AppData = { bookmarks, profile, content: markdownContent };
+    // 本地缓存始终保存全量数据，不受 GitHub 同步勾选影响，确保本地数据安全
     localStorage.setItem('zenspace_md_cache', storage.stringifyToMd(data));
   }, [bookmarks, profile, markdownContent]);
 
@@ -470,7 +471,7 @@ export default function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: `Update ${selectedFile.name} via ZenSpace`,
+          message: `Update ${selectedFile.name} via WangLi`,
           content: btoa(unescape(encodeURIComponent(mdContent))),
           branch,
           sha: selectedFile.sha
@@ -511,7 +512,7 @@ export default function App() {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            message: `Create ${name} via ZenSpace`,
+            message: `Create ${name} via WangLi`,
             content: btoa(''), // Empty file
             branch
           })
@@ -529,7 +530,7 @@ export default function App() {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            message: `Create folder ${name} via ZenSpace`,
+            message: `Create folder ${name} via WangLi`,
             content: btoa(''),
             branch
           })
@@ -559,7 +560,7 @@ export default function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: `Delete ${node.name} via ZenSpace`,
+          message: `Delete ${node.name} via WangLi`,
           sha: node.sha,
           branch
         })
@@ -785,7 +786,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'zenspace.md';
+    a.download = 'wangli.md';
     a.click();
   };
 
@@ -797,7 +798,7 @@ export default function App() {
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
             <LayoutGrid size={24} />
           </div>
-          <span className="hidden lg:block font-bold text-xl tracking-tight text-slate-800">ZenSpace</span>
+          <span className="hidden lg:block font-bold text-xl tracking-tight text-slate-800">WangLi</span>
         </div>
 
         <div className="flex md:flex-col gap-2 md:gap-4">
