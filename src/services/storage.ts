@@ -161,7 +161,7 @@ export const syncToGithub = async (config: StorageConfig, data: AppData, isNoteb
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        message: 'Sync to Markdown via WangLi',
+        message: 'Sync to Markdown via ZenSpace',
         content: btoa(unescape(encodeURIComponent(mdContent))),
         branch,
         sha
