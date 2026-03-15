@@ -24,6 +24,8 @@ export interface StorageConfig {
     repo: string;
     branch: string;
     path: string; // e.g., "zenspace.md"
+    syncProfile?: boolean;
+    syncBookmarks?: boolean;
   };
   aiModels: AIModelConfig[];
   activeAIId?: string;

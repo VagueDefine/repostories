@@ -28,12 +28,16 @@ export const defaultBookmarks: Bookmark[] = [
 ];
 
 // 将数据序列化为 Markdown + YAML 格式
-export const stringifyToMd = (data: AppData): string => {
-  const frontmatter = yaml.dump({
-    bookmarks: data.bookmarks,
-    profile: data.profile
-  });
-  return `---\n${frontmatter}---\n\n${data.content}`;
+export const stringifyToMd = (data: AppData, config?: StorageConfig): string => {
+  const syncProfile = config?.github?.syncProfile !== false;
+  const syncBookmarks = config?.github?.syncBookmarks !== false;
+
+  const frontmatter: any = {};
+  if (syncBookmarks) frontmatter.bookmarks = data.bookmarks;
+  if (syncProfile) frontmatter.profile = data.profile;
+
+  const yamlStr = yaml.dump(frontmatter);
+  return `---\n${yamlStr}---\n\n${syncProfile ? data.content : ''}`;
 };
 
 // 从 Markdown + YAML 格式解析数据
@@ -68,6 +72,12 @@ export const loadConfig = (): StorageConfig => {
   
   if (!config.aiModels) config.aiModels = [];
   
+  // Initialize GitHub sync defaults
+  if (config.github) {
+    if (config.github.syncProfile === undefined) config.github.syncProfile = true;
+    if (config.github.syncBookmarks === undefined) config.github.syncBookmarks = true;
+  }
+  
   return config;
 };
 
@@ -79,7 +89,7 @@ export const syncToGithub = async (config: StorageConfig, data: AppData) => {
   if (config.type !== 'github' || !config.github) return;
   
   const { token, repo, branch, path } = config.github;
-  const mdContent = stringifyToMd(data);
+  const mdContent = stringifyToMd(data, config);
   
   try {
     const getUrl = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;

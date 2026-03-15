@@ -188,6 +188,10 @@ export default function App() {
     localStorage.setItem('zenspace_md_cache', storage.stringifyToMd(data));
   }, [bookmarks, profile, markdownContent]);
 
+  useEffect(() => {
+    storage.saveConfig(config);
+  }, [config]);
+
   const categories = useMemo(() => {
     const cats = Array.from(new Set(bookmarks.map(b => b.category)));
     return ['全部', ...cats];
@@ -268,12 +272,48 @@ export default function App() {
   };
 
   const handleSync = async () => {
+    if (config.type === 'github' && config.github) {
+      if (!config.github.syncProfile && !config.github.syncBookmarks) {
+        addToast('请至少选择一项同步内容', 'info');
+        return;
+      }
+    }
     const data: AppData = { bookmarks, profile, content: markdownContent };
     const success = await storage.syncToGithub(config, data);
     if (success) {
       addToast('同步成功！您的 .md 文件已更新。', 'success');
     } else {
       addToast('同步失败，请检查 GitHub 配置。', 'error');
+    }
+  };
+
+  const handlePull = async () => {
+    if (config.type !== 'github' || !config.github) return;
+    const { path } = config.github;
+    
+    setIsFetchingFiles(true);
+    try {
+      const fileData = await storage.fetchGithubFile(config, path);
+      if (fileData) {
+        const parsed = storage.parseFromMd(fileData.content);
+        
+        // Only update parts that are enabled for sync
+        if (config.github.syncBookmarks) {
+          setBookmarks(parsed.bookmarks);
+        }
+        if (config.github.syncProfile) {
+          setProfile(parsed.profile);
+          setMarkdownContent(parsed.content);
+        }
+        
+        addToast('从 GitHub 加载成功！', 'success');
+      } else {
+        addToast('未找到存储文件，请先同步。', 'error');
+      }
+    } catch (err) {
+      addToast('加载失败，请检查网络或配置。', 'error');
+    } finally {
+      setIsFetchingFiles(false);
     }
   };
 
@@ -303,7 +343,6 @@ export default function App() {
       activeAIId: config.activeAIId || (newModels.length > 0 ? newModels[0].id : undefined)
     };
     setConfig(newConfig);
-    storage.saveConfig(newConfig);
     setShowAIModelModal(false);
     setEditingAIModel(null);
     addToast('AI 模型配置已保存', 'success');
@@ -551,13 +590,11 @@ export default function App() {
       activeAIId: config.activeAIId === id ? (newModels.length > 0 ? newModels[0].id : undefined) : config.activeAIId
     };
     setConfig(newConfig);
-    storage.saveConfig(newConfig);
   };
 
   const handleSelectAIModel = (id: string) => {
     const newConfig = { ...config, activeAIId: id };
     setConfig(newConfig);
-    storage.saveConfig(newConfig);
   };
 
   const handleSendMessage = async () => {
@@ -1392,13 +1429,51 @@ export default function App() {
                             })}
                           />
                         </div>
-                        <button 
-                          onClick={handleSync}
-                          className="w-full btn-primary flex items-center justify-center gap-2"
-                        >
-                          <Save size={18} />
-                          立即同步到 GitHub (.md)
-                        </button>
+                        <div className="space-y-3 pt-2">
+                          <label className="text-sm font-medium text-slate-600 block">同步内容</label>
+                          <div className="flex flex-wrap gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                              <input 
+                                type="checkbox" 
+                                checked={config.github?.syncProfile !== false}
+                                onChange={(e) => setConfig({
+                                  ...config,
+                                  github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncProfile: e.target.checked }
+                                })}
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">个人资料 (Markdown)</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                              <input 
+                                type="checkbox" 
+                                checked={config.github?.syncBookmarks !== false}
+                                onChange={(e) => setConfig({
+                                  ...config,
+                                  github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncBookmarks: e.target.checked }
+                                })}
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">收藏夹 (含分类/结构)</span>
+                            </label>
+                          </div>
+                        </div>
+                        <div className="flex gap-3">
+                          <button 
+                            onClick={handleSync}
+                            className="flex-1 btn-primary flex items-center justify-center gap-2"
+                          >
+                            <Save size={18} />
+                            同步到 GitHub
+                          </button>
+                          <button 
+                            onClick={handlePull}
+                            className="flex-1 btn-secondary flex items-center justify-center gap-2"
+                          >
+                            <Download size={18} />
+                            从 GitHub 加载
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
