@@ -823,7 +823,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#f8fafc]">
+    <div className="min-h-screen flex flex-col md:flex-row bg-zinc-50">
       {/* Sidebar */}
       <nav className="w-full md:w-20 lg:w-64 glass md:h-screen sticky top-0 z-40 flex md:flex-col items-center justify-between p-4 md:py-8">
         <div className="flex items-center gap-3 lg:w-full lg:px-4">
@@ -914,37 +914,41 @@ export default function App() {
                   />
                   <button 
                     onClick={() => document.getElementById('html-import')?.click()}
-                    className="btn-secondary flex items-center gap-2"
+                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
+                    title="导入 HTML"
                   >
                     <Upload size={18} />
-                    <span>导入 HTML</span>
+                    <span className="hidden sm:inline">导入</span>
                   </button>
                   <button 
                     onClick={downloadMd}
-                    className="btn-secondary flex items-center gap-2"
+                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
+                    title="导出 .md"
                   >
                     <Download size={18} />
-                    <span>导出 .md</span>
+                    <span className="hidden sm:inline">导出</span>
                   </button>
                   <button 
                     onClick={() => {
                       setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
-                    className="btn-secondary flex items-center gap-2"
+                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
+                    title="新建文件夹"
                   >
                     <Folder size={20} />
-                    <span>新建文件夹</span>
+                    <span className="hidden sm:inline">文件夹</span>
                   </button>
                   <button 
                     onClick={() => {
                       setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
-                    className="btn-primary flex items-center gap-2"
+                    className="btn-primary flex items-center gap-2 px-3 sm:px-4"
+                    title="新建书签"
                   >
                     <Plus size={20} />
-                    <span>添加书签</span>
+                    <span className="hidden sm:inline">新建</span>
                   </button>
                 </div>
               </header>
@@ -1959,7 +1963,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
     <button 
       onClick={onClick}
       className={cn(
-        "flex items-center gap-3 p-3 lg:px-4 lg:py-3 rounded-2xl transition-all duration-300 group relative",
+        "flex items-center gap-2 md:gap-3 p-2 md:p-3 lg:px-4 lg:py-3 rounded-2xl transition-all duration-300 group relative",
         active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-slate-500 hover:bg-indigo-50 hover:text-indigo-600"
       )}
     >
@@ -1992,7 +1996,7 @@ function BookmarkCard({ bookmark, onDelete, onOpenFolder }: { bookmark: Bookmark
       layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
       onClick={isFolder ? onOpenFolder : undefined}
       className={cn(
-        "group glass p-6 rounded-3xl hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative border border-slate-100",
+        "group glass p-4 sm:p-6 rounded-3xl hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative border border-slate-100",
         isFolder ? "cursor-pointer bg-gradient-to-br from-indigo-50/50 to-white border-indigo-100/50" : ""
       )}
     >
