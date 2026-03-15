@@ -26,28 +26,78 @@ export const defaultBookmarks: Bookmark[] = [
   }
 ];
 
-// 将数据序列化为 Markdown + YAML 格式
+// 将数据序列化为 Markdown + JSON 格式
 export const stringifyToMd = (data: AppData, config?: StorageConfig): string => {
   const syncProfile = config?.github?.syncProfile !== false;
   const syncBookmarks = config?.github?.syncBookmarks !== false;
 
-  const frontmatter: any = {};
-  if (syncBookmarks) frontmatter.bookmarks = data.bookmarks;
-  if (syncProfile) frontmatter.profile = data.profile;
+  let md = '';
 
-  const yamlStr = yaml.dump(frontmatter);
-  return `---\n${yamlStr}---\n\n${syncProfile ? data.content : ''}`;
+  if (syncProfile) {
+    md += (data.content || '').trim() + '\n\n';
+  }
+
+  if (syncBookmarks) {
+    md += '<!-- ZENSPACE_BOOKMARKS_START -->\n';
+    md += '## 收藏夹\n\n';
+    
+    data.bookmarks.forEach(b => {
+      if (b.type === 'link') {
+        md += `- [${b.title}](${b.url || '#'}) ${b.description ? `- ${b.description}` : ''} \`${b.category}\`\n`;
+      } else {
+        md += `- 📁 **${b.title}** \`${b.category}\`\n`;
+      }
+    });
+    md += '\n<!-- ZENSPACE_BOOKMARKS_END -->\n\n';
+  }
+
+  // Hidden JSON data for reliable parsing
+  const hiddenData = {
+    bookmarks: syncBookmarks ? data.bookmarks : undefined,
+    profile: syncProfile ? data.profile : undefined,
+  };
+
+  md += '<!-- ZENSPACE_DATA_START\n';
+  md += JSON.stringify(hiddenData, null, 2);
+  md += '\nZENSPACE_DATA_END -->\n';
+
+  return md;
 };
 
-// 从 Markdown + YAML 格式解析数据
+// 从 Markdown + JSON/YAML 格式解析数据
 export const parseFromMd = (md: string): AppData => {
   try {
+    // Try parsing new JSON format first
+    const jsonMatch = md.match(/<!-- ZENSPACE_DATA_START\n([\s\S]*?)\nZENSPACE_DATA_END -->/);
+    if (jsonMatch) {
+      const parsedData = JSON.parse(jsonMatch[1]);
+      
+      let content = '';
+      const bookmarksStartIdx = md.indexOf('<!-- ZENSPACE_BOOKMARKS_START -->');
+      const dataStartIdx = md.indexOf('<!-- ZENSPACE_DATA_START');
+      
+      if (bookmarksStartIdx !== -1) {
+        content = md.substring(0, bookmarksStartIdx).trim();
+      } else if (dataStartIdx !== -1) {
+        content = md.substring(0, dataStartIdx).trim();
+      } else {
+        content = md.trim();
+      }
+
+      return {
+        bookmarks: parsedData.bookmarks || defaultBookmarks,
+        profile: parsedData.profile || defaultProfile,
+        content: content || ''
+      };
+    }
+
+    // Fallback to old YAML format
     const parts = md.split('---');
     if (parts.length >= 3) {
       const frontmatter = yaml.load(parts[1]) as any;
       const content = parts.slice(2).join('---').trim();
       return {
-        bookmarks: frontmatter.bookmarks || [],
+        bookmarks: frontmatter.bookmarks || defaultBookmarks,
         profile: frontmatter.profile || defaultProfile,
         content: content || ''
       };
@@ -123,10 +173,10 @@ export const syncToGithub = async (config: StorageConfig, data: AppData) => {
   }
 };
 
-export const fetchGithubTree = async (config: StorageConfig, path: string = '') => {
+export const fetchGithubTree = async (config: StorageConfig, path: string = '', repo: string, branch: string) => {
   if (config.type !== 'github' || !config.github) return [];
   
-  const { token, repo, branch } = config.github;
+  const { token } = config.github;
   const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
   
   try {
@@ -142,10 +192,10 @@ export const fetchGithubTree = async (config: StorageConfig, path: string = '') 
   return [];
 };
 
-export const fetchGithubFile = async (config: StorageConfig, path: string) => {
+export const fetchGithubFile = async (config: StorageConfig, path: string, repo: string, branch: string) => {
   if (config.type !== 'github' || !config.github) return null;
   
-  const { token, repo, branch } = config.github;
+  const { token } = config.github;
   const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
   
   try {

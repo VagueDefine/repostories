@@ -57,7 +57,7 @@ export interface AIResponse {
   functionCalls?: { name: string, args: any }[];
 }
 
-export const chatWithAI = async (config: AIModelConfig, message: string, context: string): Promise<AIResponse> => {
+export const chatWithAI = async (config: AIModelConfig, message: string, context: string, history: { role: 'user' | 'ai', content: string }[] = []): Promise<AIResponse> => {
   const { apiKey, apiUrl, model = "gemini-3-flash-preview" } = config;
 
   // Mock mode for testing without real API
@@ -105,7 +105,19 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}` },
+              { role: "system", content: `你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
+
+重要规则：
+1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
+2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。
+3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。
+4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。
+5. **目标文件夹识别**：当用户提到某个文件夹（如“电源文件夹”）时，请在上下文的收藏夹内容中查找该文件夹的 ID。如果找不到，请先使用 createFolder 创建它。
+6. **使用真实 ID**：在调用 moveBookmarks、updateBookmarksCategory、deleteBookmarks 等工具时，请确保 \`bookmarkIds\` 数组中包含的是书签的**真实 ID**，而不是标题。
+
+上下文信息：
+${context}` },
+              ...history.map(msg => ({ role: msg.role === 'ai' ? 'assistant' : 'user', content: msg.content })),
               { role: "user", content: message }
             ],
             tools: bookmarkTools.map(tool => ({
@@ -146,11 +158,30 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
       const response = await ai.models.generateContent({
         model: model || "gemini-3-flash-preview",
         contents: [
-          { text: `Context: ${context}` },
-          { text: message }
+          ...history.map(msg => ({
+            role: msg.role === 'ai' ? 'model' : 'user',
+            parts: [{ text: msg.content }]
+          })),
+          {
+            role: 'user',
+            parts: [
+              { text: message }
+            ]
+          }
         ],
         config: {
-          systemInstruction: "你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}",
+          systemInstruction: `你是一个名为 WangLi 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
+
+重要规则：
+1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
+2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。
+3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。
+4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。
+5. **目标文件夹识别**：当用户提到某个文件夹（如“电源文件夹”）时，请在上下文的收藏夹内容中查找该文件夹的 ID。如果找不到，请先使用 createFolder 创建它。
+6. **使用真实 ID**：在调用 moveBookmarks、updateBookmarksCategory、deleteBookmarks 等工具时，请确保 \`bookmarkIds\` 数组中包含的是书签的**真实 ID**，而不是标题。
+
+上下文信息：
+${context}`,
           tools: [{ functionDeclarations: bookmarkTools }]
         }
       });

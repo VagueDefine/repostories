@@ -274,7 +274,9 @@ export default function App() {
 
   const handleSync = async () => {
     if (config.type === 'github' && config.github) {
-      if (!config.github.syncProfile && !config.github.syncBookmarks) {
+      const syncProfile = config.github.syncProfile !== false;
+      const syncBookmarks = config.github.syncBookmarks !== false;
+      if (!syncProfile && !syncBookmarks) {
         addToast('请至少选择一项同步内容', 'info');
         return;
       }
@@ -392,10 +394,10 @@ export default function App() {
   };
 
   const loadProfileFiles = async (path: string = '') => {
-    if (!config.github?.token || !config.github?.repo) return;
+    if (!config.github?.token || (!config.github?.repo && !config.github?.notebookRepo)) return;
     setIsFetchingFiles(true);
     try {
-      const data = await storage.fetchGithubTree(config, path);
+      const data = await storage.fetchGithubTree(config, path, true);
       const nodes: FileNode[] = data.map((item: any) => ({
         id: item.sha,
         name: item.name,
@@ -439,20 +441,21 @@ export default function App() {
         newExpanded.delete(node.path);
       } else {
         newExpanded.add(node.path);
-        if (!node.children) {
-          await loadProfileFiles(node.path);
-        }
+        // Always try to load children when expanding
+        await loadProfileFiles(node.path);
       }
       setExpandedFolders(newExpanded);
-    } else if (node.type === 'file') {
+    } else if (node.type === 'file' || node.type === 'image') {
       setIsFetchingFiles(true);
-      const fileData = await storage.fetchGithubFile(config, node.path);
-      if (fileData) {
-        setSelectedFile({ ...node, content: fileData.content, sha: fileData.sha });
+      if (node.type === 'file') {
+        const fileData = await storage.fetchGithubFile(config, node.path, true);
+        if (fileData) {
+          setSelectedFile({ ...node, content: fileData.content, sha: fileData.sha });
+        }
+      } else {
+        setSelectedFile(node);
       }
       setIsFetchingFiles(false);
-    } else if (node.type === 'image') {
-      setSelectedFile(node);
     }
   };
 
@@ -460,7 +463,9 @@ export default function App() {
     if (!selectedFile || !config.github) return;
     setIsFetchingFiles(true);
     
-    const { token, repo, branch } = config.github;
+    const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+    const repo = notebookRepo || defaultRepo;
+    const branch = notebookBranch || defaultBranch;
     const mdContent = selectedFile.content || '';
     
     try {
@@ -500,7 +505,9 @@ export default function App() {
     if (!name) return;
 
     const path = parentPath ? `${parentPath}/${name}` : name;
-    const { token, repo, branch } = config.github;
+    const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+    const repo = notebookRepo || defaultRepo;
+    const branch = notebookBranch || defaultBranch;
 
     setIsFetchingFiles(true);
     try {
@@ -550,7 +557,9 @@ export default function App() {
   const handleDeleteFile = async (node: FileNode) => {
     if (!config.github || !window.confirm(`确定要删除 ${node.name} 吗？`)) return;
     
-    const { token, repo, branch } = config.github;
+    const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+    const repo = notebookRepo || defaultRepo;
+    const branch = notebookBranch || defaultBranch;
     setIsFetchingFiles(true);
     try {
       const res = await fetch(`https://api.github.com/repos/${repo}/contents/${node.path}`, {
@@ -578,8 +587,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'profile' && config.type === 'github' && profileFiles.length === 0) {
-      loadProfileFiles();
+    if (activeTab === 'profile' && config.type === 'github') {
+      if (profileFiles.length === 0) loadProfileFiles();
+      if (githubRepos.length === 0) fetchGithubRepos();
     }
   }, [activeTab, config.type]);
 
@@ -627,7 +637,7 @@ export default function App() {
       ${markdownContent}
     `;
 
-    const response = await chatWithAI(activeAIModel, userMsg, context);
+    const response = await chatWithAI(activeAIModel, userMsg, context, messages);
     
     let finalContent = response.text;
     if (response.functionCalls && response.functionCalls.length > 0) {
@@ -674,9 +684,31 @@ export default function App() {
             changed = true;
             break;
           case 'moveBookmarks':
+            let targetId = call.args.targetFolderId;
+            if (targetId && targetId !== 'root') {
+              // Check if targetId is actually a title instead of an ID
+              const folderByTitle = newBookmarks.find(b => b.type === 'folder' && b.title === targetId);
+              const folderById = newBookmarks.find(b => b.id === targetId);
+              if (!folderById && folderByTitle) {
+                targetId = folderByTitle.id;
+              } else if (!folderById && !folderByTitle) {
+                // If target folder doesn't exist, create it automatically
+                const newFolderId = Math.random().toString(36).substr(2, 9);
+                newBookmarks.unshift({
+                  id: newFolderId,
+                  title: targetId,
+                  url: '',
+                  category: '文件夹',
+                  description: 'AI 自动创建',
+                  createdAt: Date.now(),
+                  type: 'folder'
+                });
+                targetId = newFolderId;
+              }
+            }
             newBookmarks = newBookmarks.map(b => {
-              if (call.args.bookmarkIds.includes(b.id)) {
-                return { ...b, parentId: (call.args.targetFolderId === 'root' || !call.args.targetFolderId) ? undefined : call.args.targetFolderId };
+              if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
+                return { ...b, parentId: (targetId === 'root' || !targetId) ? undefined : targetId };
               }
               return b;
             });
@@ -684,7 +716,7 @@ export default function App() {
             break;
           case 'updateBookmarksCategory':
             newBookmarks = newBookmarks.map(b => {
-              if (call.args.bookmarkIds.includes(b.id)) {
+              if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
                 return { ...b, category: call.args.category };
               }
               return b;
@@ -692,7 +724,7 @@ export default function App() {
             changed = true;
             break;
           case 'deleteBookmarks':
-            newBookmarks = newBookmarks.filter(b => !call.args.bookmarkIds.includes(b.id));
+            newBookmarks = newBookmarks.filter(b => !call.args.bookmarkIds.includes(b.id) && !call.args.bookmarkIds.includes(b.title));
             changed = true;
             break;
         }
@@ -1176,6 +1208,41 @@ export default function App() {
                             <div>
                               <h3 className="text-2xl font-bold text-slate-800">GitHub 笔记本</h3>
                               <p className="text-slate-500 text-sm">直接管理您的 GitHub 仓库文件</p>
+                              <div className="flex gap-4 mt-4">
+                                <select 
+                                  className="input-field text-xs" 
+                                  value={config.github?.notebookRepo || ''}
+                                  onChange={(e) => {
+                                    const repo = e.target.value;
+                                    setConfig({
+                                      ...config,
+                                      github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), notebookRepo: repo }
+                                    });
+                                    if (repo) {
+                                      fetchGithubBranches(repo);
+                                      loadProfileFiles();
+                                    }
+                                  }}
+                                >
+                                  <option value="">默认 ({config.github?.repo})</option>
+                                  {githubRepos.map(r => <option key={r.full_name} value={r.full_name}>{r.full_name}</option>)}
+                                </select>
+                                <select 
+                                  className="input-field text-xs" 
+                                  value={config.github?.notebookBranch || config.github?.branch || 'main'}
+                                  onChange={(e) => {
+                                    setConfig({
+                                      ...config,
+                                      github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), notebookBranch: e.target.value }
+                                    });
+                                    loadProfileFiles();
+                                  }}
+                                >
+                                  {githubBranches.map(b => (
+                                    <option key={b.name} value={b.name}>{b.name}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                             <button 
                               onClick={() => loadProfileFiles()}
@@ -1483,7 +1550,12 @@ export default function App() {
                             </label>
                           </div>
                         </div>
-                        <div className="flex gap-3">
+                        
+                        <div className="pt-4 border-t border-slate-100">
+                          <p className="text-xs text-slate-500">提示：您可以在“个人资料”选项卡中直接切换 GitHub 笔记本的仓库和分支。</p>
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
                           <button 
                             onClick={handleSync}
                             className="flex-1 btn-primary flex items-center justify-center gap-2"
