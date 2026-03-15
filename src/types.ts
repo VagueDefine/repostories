@@ -29,12 +29,24 @@ export interface StorageConfig {
   activeAIId?: string;
 }
 
+export interface FileNode {
+  id: string;
+  name: string;
+  type: 'file' | 'folder' | 'image';
+  content?: string; // For files
+  url?: string; // For images
+  children?: FileNode[]; // For folders
+  path: string; // GitHub path
+  sha?: string; // GitHub SHA for updates
+}
+
 export interface UserProfile {
   name: string;
   bio: string;
   avatar?: string;
   links: { label: string; url: string; icon: string }[];
   content: string; // Markdown body
+  files?: FileNode[];
 }
 
 export interface AppData {

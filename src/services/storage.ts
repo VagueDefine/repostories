@@ -113,3 +113,45 @@ export const syncToGithub = async (config: StorageConfig, data: AppData) => {
     return false;
   }
 };
+
+export const fetchGithubTree = async (config: StorageConfig, path: string = '') => {
+  if (config.type !== 'github' || !config.github) return [];
+  
+  const { token, repo, branch } = config.github;
+  const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+  
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `token ${token}` }
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (error) {
+    console.error('Fetch GitHub tree failed:', error);
+  }
+  return [];
+};
+
+export const fetchGithubFile = async (config: StorageConfig, path: string) => {
+  if (config.type !== 'github' || !config.github) return null;
+  
+  const { token, repo, branch } = config.github;
+  const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+  
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `token ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        content: decodeURIComponent(escape(atob(data.content))),
+        sha: data.sha
+      };
+    }
+  } catch (error) {
+    console.error('Fetch GitHub file failed:', error);
+  }
+  return null;
+};

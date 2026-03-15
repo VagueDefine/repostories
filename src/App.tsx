@@ -7,12 +7,12 @@ import {
   Info, LogOut, Menu, X, FileText, Download,
   Send, Bot, Key, Link as LinkIcon, Edit3,
   ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload,
-  Copy, Check
+  Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import Markdown from 'react-markdown';
-import { Bookmark, TabType, UserProfile, StorageConfig, AppData, AIModelConfig } from './types';
+import { Bookmark, TabType, UserProfile, StorageConfig, AppData, AIModelConfig, FileNode } from './types';
 import * as storage from './services/storage';
 import { chatWithAI, analyzeUrl } from './services/ai';
 import { parseBookmarkHtml } from './services/bookmarkParser';
@@ -20,6 +20,99 @@ import { parseBookmarkHtml } from './services/bookmarkParser';
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const FileTreeNode = ({ 
+  node, 
+  expandedFolders, 
+  onToggle, 
+  onDelete,
+  onCreate,
+  selectedPath,
+  level = 0 
+}: { 
+  node: FileNode; 
+  expandedFolders: Set<string>; 
+  onToggle: (node: FileNode) => void; 
+  onDelete: (node: FileNode) => void;
+  onCreate: (type: 'file' | 'folder', path: string) => void;
+  selectedPath?: string;
+  level?: number;
+}) => {
+  const isExpanded = expandedFolders.has(node.path);
+  const isSelected = selectedPath === node.path;
+
+  return (
+    <div className="select-none">
+      <div 
+        className={cn(
+          "flex items-center gap-2 py-1.5 px-3 rounded-xl cursor-pointer transition-all group",
+          isSelected ? "bg-indigo-50 text-indigo-600" : "hover:bg-slate-50 text-slate-600"
+        )}
+        style={{ paddingLeft: `${(level * 16) + 12}px` }}
+        onClick={() => onToggle(node)}
+      >
+        <span className="w-4 flex items-center justify-center">
+          {node.type === 'folder' && (
+            isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
+          )}
+        </span>
+        {node.type === 'folder' ? (
+          <Folder size={16} className={cn(isExpanded ? "text-indigo-500" : "text-slate-400")} />
+        ) : node.type === 'image' ? (
+          <Image size={16} className="text-emerald-500" />
+        ) : (
+          <File size={16} className="text-slate-400" />
+        )}
+        <span className="text-sm font-medium truncate flex-1">{node.name}</span>
+        
+        <div className="hidden group-hover:flex items-center gap-1">
+          {node.type === 'folder' && (
+            <>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onCreate('file', node.path); }}
+                className="p-1 hover:text-indigo-600"
+                title="新建文件"
+              >
+                <FilePlus size={14} />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onCreate('folder', node.path); }}
+                className="p-1 hover:text-indigo-600"
+                title="新建文件夹"
+              >
+                <FolderPlus size={14} />
+              </button>
+            </>
+          )}
+          <button 
+            onClick={(e) => { e.stopPropagation(); onDelete(node); }}
+            className="p-1 hover:text-rose-500"
+            title="删除"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+      
+      {node.type === 'folder' && isExpanded && node.children && (
+        <div className="mt-0.5">
+          {node.children.map(child => (
+            <FileTreeNode 
+              key={child.path} 
+              node={child} 
+              expandedFolders={expandedFolders} 
+              onToggle={onToggle}
+              onDelete={onDelete}
+              onCreate={onCreate}
+              selectedPath={selectedPath}
+              level={level + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('bookmarks');
@@ -48,6 +141,12 @@ export default function App() {
   const [githubRepos, setGithubRepos] = useState<{ full_name: string }[]>([]);
   const [githubBranches, setGithubBranches] = useState<{ name: string }[]>([]);
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
+
+  // Profile Files State
+  const [profileFiles, setProfileFiles] = useState<FileNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [isFetchingFiles, setIsFetchingFiles] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -251,6 +350,198 @@ export default function App() {
       setIsFetchingGithub(false);
     }
   };
+
+  const loadProfileFiles = async (path: string = '') => {
+    if (!config.github?.token || !config.github?.repo) return;
+    setIsFetchingFiles(true);
+    try {
+      const data = await storage.fetchGithubTree(config, path);
+      const nodes: FileNode[] = data.map((item: any) => ({
+        id: item.sha,
+        name: item.name,
+        type: item.type === 'dir' ? 'folder' : (item.name.match(/\.(jpg|jpeg|png|gif|svg|webp)$/i) ? 'image' : 'file'),
+        path: item.path,
+        sha: item.sha,
+        url: item.download_url
+      }));
+      
+      if (path === '') {
+        setProfileFiles(nodes);
+      } else {
+        // Update nested children - simplified for now, usually you'd find the parent node
+        setProfileFiles(prev => {
+          const updateNodes = (list: FileNode[]): FileNode[] => {
+            return list.map(node => {
+              if (node.path === path) {
+                return { ...node, children: nodes };
+              }
+              if (node.children) {
+                return { ...node, children: updateNodes(node.children) };
+              }
+              return node;
+            });
+          };
+          return updateNodes(prev);
+        });
+      }
+    } catch (err) {
+      addToast('加载文件失败', 'error');
+    } finally {
+      setIsFetchingFiles(false);
+    }
+  };
+
+  const handleFileClick = async (node: FileNode) => {
+    if (node.type === 'folder') {
+      const isExpanded = expandedFolders.has(node.path);
+      const newExpanded = new Set(expandedFolders);
+      if (isExpanded) {
+        newExpanded.delete(node.path);
+      } else {
+        newExpanded.add(node.path);
+        if (!node.children) {
+          await loadProfileFiles(node.path);
+        }
+      }
+      setExpandedFolders(newExpanded);
+    } else if (node.type === 'file') {
+      setIsFetchingFiles(true);
+      const fileData = await storage.fetchGithubFile(config, node.path);
+      if (fileData) {
+        setSelectedFile({ ...node, content: fileData.content, sha: fileData.sha });
+      }
+      setIsFetchingFiles(false);
+    } else if (node.type === 'image') {
+      setSelectedFile(node);
+    }
+  };
+
+  const handleSaveFile = async () => {
+    if (!selectedFile || !config.github) return;
+    setIsFetchingFiles(true);
+    
+    const { token, repo, branch } = config.github;
+    const mdContent = selectedFile.content || '';
+    
+    try {
+      const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${selectedFile.path}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: `Update ${selectedFile.name} via ZenSpace`,
+          content: btoa(unescape(encodeURIComponent(mdContent))),
+          branch,
+          sha: selectedFile.sha
+        })
+      });
+      
+      if (putRes.ok) {
+        const data = await putRes.json();
+        setSelectedFile({ ...selectedFile, sha: data.content.sha });
+        addToast('文件已保存到 GitHub', 'success');
+        // Refresh the tree to ensure consistency
+        loadProfileFiles(selectedFile.path.split('/').slice(0, -1).join('/'));
+      } else {
+        addToast('保存失败', 'error');
+      }
+    } catch (error) {
+      addToast('网络错误', 'error');
+    } finally {
+      setIsFetchingFiles(false);
+    }
+  };
+
+  const handleCreateNew = async (type: 'file' | 'folder', parentPath: string = '') => {
+    if (!config.github) return;
+    const name = prompt(`请输入${type === 'file' ? '文件' : '文件夹'}名称:`);
+    if (!name) return;
+
+    const path = parentPath ? `${parentPath}/${name}` : name;
+    const { token, repo, branch } = config.github;
+
+    setIsFetchingFiles(true);
+    try {
+      if (type === 'file') {
+        const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: `Create ${name} via ZenSpace`,
+            content: btoa(''), // Empty file
+            branch
+          })
+        });
+        if (putRes.ok) {
+          addToast('文件已创建', 'success');
+          loadProfileFiles(parentPath);
+        }
+      } else {
+        // GitHub doesn't support empty folders, so we create a .keep file
+        const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}/.keep`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: `Create folder ${name} via ZenSpace`,
+            content: btoa(''),
+            branch
+          })
+        });
+        if (putRes.ok) {
+          addToast('文件夹已创建', 'success');
+          loadProfileFiles(parentPath);
+        }
+      }
+    } catch (err) {
+      addToast('创建失败', 'error');
+    } finally {
+      setIsFetchingFiles(false);
+    }
+  };
+
+  const handleDeleteFile = async (node: FileNode) => {
+    if (!config.github || !window.confirm(`确定要删除 ${node.name} 吗？`)) return;
+    
+    const { token, repo, branch } = config.github;
+    setIsFetchingFiles(true);
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/contents/${node.path}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: `Delete ${node.name} via ZenSpace`,
+          sha: node.sha,
+          branch
+        })
+      });
+      if (res.ok) {
+        addToast('已删除', 'success');
+        if (selectedFile?.path === node.path) setSelectedFile(null);
+        loadProfileFiles(node.path.split('/').slice(0, -1).join('/'));
+      }
+    } catch (err) {
+      addToast('删除失败', 'error');
+    } finally {
+      setIsFetchingFiles(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'profile' && config.type === 'github' && profileFiles.length === 0) {
+      loadProfileFiles();
+    }
+  }, [activeTab, config.type]);
 
   const handleDeleteAIModel = (id: string) => {
     const newModels = config.aiModels.filter(m => m.id !== id);
@@ -807,7 +1098,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="prose prose-slate max-w-none bg-white p-10 rounded-[2rem] border border-slate-100 shadow-sm">
+                      <div className="prose prose-slate max-w-none bg-white p-10 rounded-[2rem] border border-slate-100 shadow-sm mb-8">
                         <div className="flex items-center justify-between mb-6">
                           <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                             <FileText size={14} /> Markdown 内容
@@ -815,6 +1106,151 @@ export default function App() {
                         </div>
                         <Markdown>{markdownContent}</Markdown>
                       </div>
+
+                      {/* GitHub File Explorer Section */}
+                      {config.type === 'github' ? (
+                        <div className="bg-white p-10 rounded-[2rem] border border-slate-100 shadow-sm">
+                          <div className="flex items-center justify-between mb-8">
+                            <div>
+                              <h3 className="text-2xl font-bold text-slate-800">GitHub 笔记本</h3>
+                              <p className="text-slate-500 text-sm">直接管理您的 GitHub 仓库文件</p>
+                            </div>
+                            <button 
+                              onClick={() => loadProfileFiles()}
+                              className="w-10 h-10 glass rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all"
+                              title="刷新文件列表"
+                            >
+                              <Download size={18} />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                            {/* File Tree */}
+                            <div className="lg:col-span-4 space-y-4 max-h-[600px] overflow-y-auto no-scrollbar pr-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <button 
+                                  onClick={() => handleCreateNew('file')}
+                                  className="flex-1 py-2 px-3 glass rounded-xl text-xs font-bold text-slate-600 hover:text-indigo-600 flex items-center justify-center gap-2 transition-all"
+                                >
+                                  <FilePlus size={14} /> 新建文件
+                                </button>
+                                <button 
+                                  onClick={() => handleCreateNew('folder')}
+                                  className="flex-1 py-2 px-3 glass rounded-xl text-xs font-bold text-slate-600 hover:text-indigo-600 flex items-center justify-center gap-2 transition-all"
+                                >
+                                  <FolderPlus size={14} /> 新建文件夹
+                                </button>
+                              </div>
+                              
+                              {isFetchingFiles && profileFiles.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                                  <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
+                                  <p className="text-sm">正在加载 GitHub 文件...</p>
+                                </div>
+                              ) : (
+                                <div className="space-y-1">
+                                  {profileFiles.map(node => (
+                                    <FileTreeNode 
+                                      key={node.path} 
+                                      node={node} 
+                                      expandedFolders={expandedFolders}
+                                      onToggle={handleFileClick}
+                                      onDelete={handleDeleteFile}
+                                      onCreate={handleCreateNew}
+                                      selectedPath={selectedFile?.path}
+                                    />
+                                  ))}
+                                  {profileFiles.length === 0 && !isFetchingFiles && (
+                                    <p className="text-sm text-slate-400 text-center py-8">未找到文件</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* File Preview/Editor */}
+                            <div className="lg:col-span-8 bg-slate-50 rounded-3xl border border-slate-100 overflow-hidden flex flex-col min-h-[500px]">
+                              {selectedFile ? (
+                                <>
+                                  <div className="bg-white px-6 py-4 border-bottom border-slate-100 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                      {selectedFile.type === 'folder' ? <Folder size={18} className="text-indigo-500" /> : 
+                                       selectedFile.type === 'image' ? <Image size={18} className="text-emerald-500" /> : 
+                                       <File size={18} className="text-slate-400" />}
+                                      <span className="font-bold text-slate-700">{selectedFile.name}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      {selectedFile.type === 'file' && (
+                                        <button 
+                                          onClick={handleSaveFile}
+                                          disabled={isFetchingFiles}
+                                          className="btn-primary py-2 px-4 text-xs flex items-center gap-2"
+                                        >
+                                          {isFetchingFiles ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={14} />}
+                                          保存
+                                        </button>
+                                      )}
+                                      <button 
+                                        onClick={() => setSelectedFile(null)}
+                                        className="p-2 text-slate-400 hover:text-rose-500"
+                                      >
+                                        <X size={18} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex-1 overflow-y-auto p-6">
+                                    {selectedFile.type === 'file' ? (
+                                      <textarea 
+                                        className="w-full h-full bg-transparent border-none outline-none font-mono text-sm leading-relaxed resize-none"
+                                        value={selectedFile.content || ''}
+                                        onChange={(e) => setSelectedFile({ ...selectedFile, content: e.target.value })}
+                                        spellCheck={false}
+                                      />
+                                    ) : selectedFile.type === 'image' ? (
+                                      <div className="flex items-center justify-center h-full">
+                                        <img 
+                                          src={selectedFile.url} 
+                                          alt={selectedFile.name} 
+                                          className="max-w-full max-h-full rounded-xl shadow-lg"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                                        <Folder size={48} className="mb-4 opacity-20" />
+                                        <p>这是一个文件夹</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-12 text-center">
+                                  <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mb-6 shadow-sm">
+                                    <FileText size={32} className="opacity-20" />
+                                  </div>
+                                  <h4 className="text-lg font-bold text-slate-600 mb-2">选择一个文件进行查看</h4>
+                                  <p className="text-sm max-w-xs">您可以查看和编辑 Markdown 笔记，或者预览仓库中的图片。</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-50 p-10 rounded-[2rem] border border-dashed border-slate-200 text-center">
+                          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+                            <Github size={32} className="text-slate-300" />
+                          </div>
+                          <h3 className="text-xl font-bold text-slate-700 mb-2">开启 GitHub 笔记本</h3>
+                          <p className="text-slate-500 mb-6 max-w-md mx-auto">
+                            在“设置”中开启 GitHub 同步，即可直接在此管理您的 GitHub 仓库文件，实现笔记、图片和文档的云端同步。
+                          </p>
+                          <button 
+                            onClick={() => setActiveTab('settings')}
+                            className="btn-primary py-3 px-8 rounded-2xl"
+                          >
+                            前往设置
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
