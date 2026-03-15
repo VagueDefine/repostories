@@ -6,7 +6,8 @@ import {
   Cloud, Sparkles, ChevronRight, LayoutGrid,
   Info, LogOut, Menu, X, FileText, Download,
   Send, Bot, Key, Link as LinkIcon, Edit3,
-  ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload
+  ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload,
+  Copy, Check
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -169,6 +170,14 @@ export default function App() {
     } else {
       addToast('同步失败，请检查 GitHub 配置。', 'error');
     }
+  };
+
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const handleCopyMessage = (text: string, idx: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(idx);
+    addToast('已复制到剪贴板', 'success');
+    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleSaveAIModel = () => {
@@ -872,10 +881,19 @@ export default function App() {
                               {msg.role === 'user' ? <User size={20} /> : <Bot size={20} />}
                             </div>
                             <div className={cn(
-                              "p-4 rounded-2xl text-sm leading-relaxed",
+                              "p-4 rounded-2xl text-sm leading-relaxed group relative",
                               msg.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-slate-50 text-slate-700 rounded-tl-none border border-slate-100"
                             )}>
                               <Markdown>{msg.content}</Markdown>
+                              {msg.role !== 'user' && (
+                                <button 
+                                  onClick={() => handleCopyMessage(msg.content, idx)}
+                                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/80 border border-slate-200 text-slate-400 opacity-0 group-hover:opacity-100 transition-all hover:text-indigo-600 hover:border-indigo-200 shadow-sm"
+                                  title="复制内容"
+                                >
+                                  {copiedId === idx ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
