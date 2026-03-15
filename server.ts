@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import * as cheerio from "cheerio";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +12,59 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Scrape metadata endpoint
+  app.post("/api/ai/scrape", async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+
+    try {
+      // Special handling for Bilibili
+      if (url.includes("bilibili.com/video/BV")) {
+        const bvid = url.match(/BV[a-zA-Z0-9]+/)?.[0];
+        if (bvid) {
+          try {
+            const apiRes = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com/"
+              }
+            });
+            const apiData = await apiRes.json();
+            if (apiData.code === 0 && apiData.data) {
+              return res.json({ 
+                title: apiData.data.title, 
+                description: apiData.data.desc || apiData.data.dynamic || ""
+              });
+            }
+          } catch (apiErr) {
+            console.error("Bilibili API error:", apiErr);
+          }
+        }
+      }
+
+      // Standard scraping for other sites or as fallback
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
+        }
+      });
+      if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
+      
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      
+      const title = $("title").text() || $("meta[property='og:title']").attr("content") || "";
+      const description = $("meta[name='description']").attr("content") || $("meta[property='og:description']").attr("content") || "";
+      
+      res.json({ title, description });
+    } catch (error) {
+      console.error("Scrape error:", error);
+      res.status(500).json({ error: "Failed to scrape metadata", details: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
 
   // AI Proxy endpoint to avoid CORS issues
   app.post("/api/ai/proxy", async (req, res) => {

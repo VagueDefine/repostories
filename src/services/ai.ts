@@ -105,9 +105,18 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。请根据以下上下文信息回答用户的问题：\n${context}` },
+              { role: "system", content: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}` },
               { role: "user", content: message }
-            ]
+            ],
+            tools: bookmarkTools.map(tool => ({
+              type: "function",
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters
+              }
+            })),
+            tool_choice: "auto"
           }
         })
       });
@@ -116,7 +125,16 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
         throw new Error(errorData.details || `API Error: ${response.status}`);
       }
       const data = await response.json();
-      return { text: data.choices?.[0]?.message?.content || "AI 响应出错" };
+      const choice = data.choices?.[0];
+      const toolCalls = choice?.message?.tool_calls;
+      
+      return { 
+        text: choice?.message?.content || "",
+        functionCalls: toolCalls?.map((tc: any) => ({
+          name: tc.function.name,
+          args: JSON.parse(tc.function.arguments)
+        }))
+      };
     } catch (error) {
       console.error("Custom AI Error:", error);
       return { text: `无法连接到 AI 服务: ${error instanceof Error ? error.message : '未知错误'}` };
@@ -132,7 +150,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           { text: message }
         ],
         config: {
-          systemInstruction: "你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要：如果你需要创建一个新文件夹并立即将书签移入其中，请在调用 createFolder 时指定一个自定义 ID（如 'new_folder_1'），并在随后的 moveBookmarks 调用中使用相同的 ID 作为 targetFolderId。请务必在一次回复中完成所有必要的操作步骤。",
+          systemInstruction: "你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。\n\n重要规则：\n1. **直接回答**：如果用户的请求只是咨询信息、总结知识或聊天（例如：'总结一下 LLC 知识'），请直接给出详细的文字回答，不要调用任何工具。\n2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。\n3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。\n4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。\n\n上下文信息：\n${context}",
           tools: [{ functionDeclarations: bookmarkTools }]
         }
       });
@@ -163,15 +181,16 @@ export const analyzeUrl = async (config: AIModelConfig, url: string, folders: Bo
   }
 
   const prompt = `
-    Analyze this URL: ${url}
+    你是一个专业的书签整理专家。请分析此 URL 的内容并提供以下信息：
     
-    Please provide:
-    1. A concise title for the bookmark.
-    2. A short description (max 50 characters).
-    3. A category (e.g., "Tools", "Learning", "News", "Social").
-    4. Which folder it should belong to from this list: ${folders.map(f => `${f.title} (ID: ${f.id})`).join(', ')}. If none fit well, suggest "root".
+    1. **标题 (title)**: 一个简洁、准确且吸引人的标题。**必须优先使用抓取结果中的标题**。如果原标题包含多余的后缀（如“ - 哔哩哔哩”），请将其去除。
+    2. **描述 (description)**: 一段简短的摘要（最多 50 个字符），概括网页的核心价值或内容。**必须基于抓取结果中的描述进行整理**。
+    3. **分类 (category)**: 一个合适的分类标签（如：“工具”、“学习”、“新闻”、“社交”、“开发”等）。
+    4. **文件夹 (folderId)**: 从以下列表中选择最合适的文件夹 ID：${folders.map(f => `${f.title} (ID: ${f.id})`).join(', ')}。如果没有合适的，请返回 "root"。
     
-    Return ONLY a JSON object in this format:
+    请务必基于网页的实际抓取内容进行判断，**绝对禁止凭空捏造与抓取内容无关的信息**。
+    
+    返回格式必须是纯 JSON 对象：
     {
       "title": "...",
       "description": "...",
@@ -193,6 +212,22 @@ export const analyzeUrl = async (config: AIModelConfig, url: string, folders: Bo
 
   if (apiUrl && apiUrl.trim() !== "") {
     try {
+      // Step 1: Try to scrape metadata first to give context to the AI
+      let scrapeContext = "";
+      try {
+        const scrapeRes = await fetch("/api/ai/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+        if (scrapeRes.ok) {
+          const meta = await scrapeRes.json();
+          scrapeContext = `\n\n【重要：真实的网页抓取结果】\n标题: ${meta.title}\n描述: ${meta.description}\n\n请注意：以上是系统直接从网页抓取的真实数据。如果抓取结果与你的猜测不符，请务必以抓取结果为准。绝对不要凭空捏造与网页内容无关的标题。`;
+        }
+      } catch (e) {
+        console.warn("Scraping failed, falling back to URL only", e);
+      }
+
       const fullUrl = getFullUrl(apiUrl);
       const response = await fetch("/api/ai/proxy", {
         method: "POST",
@@ -206,7 +241,10 @@ export const analyzeUrl = async (config: AIModelConfig, url: string, folders: Bo
           },
           body: {
             model: model || "gpt-3.5-turbo",
-            messages: [{ role: "user", content: prompt }]
+            messages: [
+              { role: "system", content: "你是一个专业的书签整理专家。你会收到一个 URL 和可能的网页抓取内容。请返回 JSON 格式的标题、描述、分类和文件夹建议。" },
+              { role: "user", content: `请分析此 URL 的内容：${url}${scrapeContext}\n\n${prompt}` }
+            ]
           }
         })
       });
@@ -227,8 +265,11 @@ export const analyzeUrl = async (config: AIModelConfig, url: string, folders: Bo
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: model || "gemini-3-flash-preview",
-        contents: [{ text: prompt }],
-        config: { responseMimeType: "application/json" }
+        contents: [{ text: `请访问并分析此 URL 的内容：${url}\n\n${prompt}` }],
+        config: { 
+          responseMimeType: "application/json",
+          tools: [{ urlContext: {} }]
+        }
       });
       return JSON.parse(response.text || "{}");
     } catch (error) {

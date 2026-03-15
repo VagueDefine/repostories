@@ -40,6 +40,15 @@ export default function App() {
   const [editingAIModel, setEditingAIModel] = useState<AIModelConfig | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<React.ReactNode | null>(null);
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
   
   // Form states
   const [newBookmark, setNewBookmark] = useState<Partial<Bookmark>>({
@@ -96,15 +105,25 @@ export default function App() {
     return bookmarks.filter(b => b.type === 'folder');
   }, [bookmarks]);
 
-  const handleAddBookmark = () => {
-    if (!newBookmark.title?.trim() || (newBookmark.type === 'link' && !newBookmark.url?.trim())) {
-      alert('请填写必要信息');
+  const handleAddBookmark = async () => {
+    if (newBookmark.type === 'link' && !newBookmark.url?.trim()) {
+      addToast('请填写 URL', 'error');
       return;
+    }
+    
+    if (newBookmark.type === 'folder' && !newBookmark.title?.trim()) {
+      addToast('请填写文件夹名称', 'error');
+      return;
+    }
+
+    let finalTitle = newBookmark.title.trim();
+    if (!finalTitle && newBookmark.url) {
+      finalTitle = newBookmark.url.split('/').pop() || newBookmark.url;
     }
     
     const bookmark: Bookmark = {
       id: Math.random().toString(36).substr(2, 9),
-      title: newBookmark.title.trim(),
+      title: finalTitle || '未命名书签',
       url: newBookmark.type === 'folder' ? '' : (newBookmark.url?.trim().startsWith('http') ? newBookmark.url.trim() : `https://${newBookmark.url?.trim()}`),
       category: newBookmark.category?.trim() || '常用',
       description: newBookmark.description?.trim(),
@@ -115,6 +134,26 @@ export default function App() {
     
     setBookmarks([bookmark, ...bookmarks]);
     setIsAddModalOpen(false);
+    
+    // If title was empty, trigger AI analysis in background for the newly added bookmark
+    if (!newBookmark.title.trim() && bookmark.type === 'link' && activeAIModel?.apiKey) {
+      try {
+        const result = await analyzeUrl(activeAIModel, bookmark.url!, folders);
+        if (result) {
+          setBookmarks(prev => prev.map(b => b.id === bookmark.id ? {
+            ...b,
+            title: result.title || b.title,
+            description: result.description || b.description,
+            category: result.category || b.category,
+            parentId: result.folderId === 'root' ? undefined : (result.folderId || b.parentId)
+          } : b));
+          addToast('已自动补全书签信息', 'success');
+        }
+      } catch (error) {
+        console.error("Background analysis failed:", error);
+      }
+    }
+
     setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link' });
   };
 
@@ -126,9 +165,9 @@ export default function App() {
     const data: AppData = { bookmarks, profile, content: markdownContent };
     const success = await storage.syncToGithub(config, data);
     if (success) {
-      alert('同步成功！您的 .md 文件已更新。');
+      addToast('同步成功！您的 .md 文件已更新。', 'success');
     } else {
-      alert('同步失败，请检查 GitHub 配置。');
+      addToast('同步失败，请检查 GitHub 配置。', 'error');
     }
   };
 
@@ -153,6 +192,7 @@ export default function App() {
     storage.saveConfig(newConfig);
     setShowAIModelModal(false);
     setEditingAIModel(null);
+    addToast('AI 模型配置已保存', 'success');
   };
 
   const handleDeleteAIModel = (id: string) => {
@@ -203,11 +243,26 @@ export default function App() {
 
     const response = await chatWithAI(activeAIModel, userMsg, context);
     
+    let finalContent = response.text;
     if (response.functionCalls && response.functionCalls.length > 0) {
       executeAIFunctionCalls(response.functionCalls);
+      
+      const actions = response.functionCalls.map(call => {
+        if (call.name === 'createFolder') return `创建文件夹 "${call.args.title}"`;
+        if (call.name === 'moveBookmarks') return `移动了 ${call.args.bookmarkIds?.length || 0} 个书签`;
+        if (call.name === 'updateBookmarksCategory') return `更新了分类为 "${call.args.category}"`;
+        if (call.name === 'deleteBookmarks') return `删除了 ${call.args.bookmarkIds?.length || 0} 个内容`;
+        return '执行了管理操作';
+      }).join('，');
+
+      if (!finalContent) {
+        finalContent = `✅ **操作成功**：${actions}。`;
+      } else {
+        finalContent = `${finalContent}\n\n---\n*💡 AI 助手已自动执行：${actions}*`;
+      }
     }
 
-    setMessages(prev => [...prev, { role: 'ai', content: response.text || (response.functionCalls ? "已完成操作。" : "AI 未返回内容") }]);
+    setMessages(prev => [...prev, { role: 'ai', content: finalContent || "AI 未返回内容" }]);
     setIsAILoading(false);
   };
 
@@ -260,6 +315,15 @@ export default function App() {
       return changed ? newBookmarks : prev;
     });
   };
+
+  useEffect(() => {
+    if (newBookmark.url?.trim() && !newBookmark.title && !isAnalyzing && activeAIModel?.apiKey && newBookmark.type === 'link') {
+      const timer = setTimeout(() => {
+        handleAnalyzeUrl();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [newBookmark.url]);
 
   const handleAnalyzeUrl = async () => {
     if (!newBookmark.url?.trim()) {
@@ -511,7 +575,10 @@ export default function App() {
                           key={bookmark.id} 
                           bookmark={bookmark} 
                           onDelete={() => handleDeleteBookmark(bookmark.id)}
-                          onOpenFolder={() => setCurrentFolderId(bookmark.id)}
+                          onOpenFolder={() => {
+                            setCurrentFolderId(bookmark.id);
+                            setSearchQuery('');
+                          }}
                         />
                       ))}
                     </div>
@@ -529,7 +596,10 @@ export default function App() {
                         key={bookmark.id} 
                         bookmark={bookmark} 
                         onDelete={() => handleDeleteBookmark(bookmark.id)}
-                        onOpenFolder={() => setCurrentFolderId(bookmark.id)}
+                        onOpenFolder={() => {
+                          setCurrentFolderId(bookmark.id);
+                          setSearchQuery('');
+                        }}
                       />
                     ))}
                     {filteredBookmarks.length === 0 && (
@@ -878,7 +948,7 @@ export default function App() {
               <div className="space-y-4">
                 {newBookmark.type === 'link' && (
                   <div className="space-y-2">
-                    <div className="relative">
+                    <div className="relative group">
                       <input 
                         type="text" placeholder="URL" className="input-field pr-12"
                         value={newBookmark.url} onChange={(e) => {
@@ -891,24 +961,36 @@ export default function App() {
                         disabled={isAnalyzing || !newBookmark.url?.trim()}
                         className={cn(
                           "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all disabled:opacity-50",
-                          isAnalyzing ? "text-indigo-400" : "text-indigo-600 hover:bg-indigo-50"
+                          isAnalyzing ? "text-indigo-400" : "text-indigo-600 hover:bg-indigo-50 group-hover:scale-110"
                         )}
-                        title="AI 智能分析"
+                        title="AI 智能分析网页内容"
                       >
                         {isAnalyzing ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                          </div>
+                          <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                         ) : (
                           <Wand2 size={20} />
                         )}
                       </button>
                     </div>
                     
+                    {!isAnalyzing && !analysisError && newBookmark.url?.trim() && !newBookmark.title && (
+                      <div 
+                        onClick={handleAnalyzeUrl}
+                        className="text-[10px] text-indigo-500 cursor-pointer hover:text-indigo-700 font-medium flex items-center gap-2 bg-indigo-50/50 p-2 rounded-lg border border-indigo-100 border-dashed animate-in fade-in slide-in-from-top-1"
+                      >
+                        <Sparkles size={12} className="animate-pulse" />
+                        检测到 URL，点击此处让 AI 自动填写标题和描述
+                      </div>
+                    )}
+                    
                     {isAnalyzing && (
-                      <div className="text-[10px] text-indigo-500 animate-pulse font-medium flex items-center gap-2">
-                        <Sparkles size={12} />
-                        AI 正在分析网页内容...
+                      <div className="text-[10px] text-indigo-500 animate-pulse font-medium flex items-center gap-2 bg-indigo-50 p-2 rounded-lg border border-indigo-100">
+                        <div className="flex gap-1">
+                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce" />
+                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                        </div>
+                        AI 正在深度分析网页内容并自动补全信息...
                       </div>
                     )}
                     
@@ -946,8 +1028,8 @@ export default function App() {
                 />
                 <button 
                   onClick={handleAddBookmark} 
-                  disabled={!newBookmark.title?.trim() || (newBookmark.type === 'link' && !newBookmark.url?.trim())}
-                  className="w-full btn-primary py-4"
+                  disabled={isAnalyzing || (newBookmark.type === 'folder' && !newBookmark.title?.trim()) || (newBookmark.type === 'link' && !newBookmark.url?.trim())}
+                  className="w-full btn-primary py-4 disabled:opacity-50"
                 >
                   {newBookmark.type === 'folder' ? '创建文件夹' : '保存书签'}
                 </button>
@@ -1015,6 +1097,28 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Toasts */}
+      <div className="fixed bottom-8 right-8 z-[100] flex flex-col gap-3">
+        {toasts.map(toast => (
+          <motion.div
+            key={toast.id}
+            initial={{ opacity: 0, x: 20, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 20, scale: 0.9 }}
+            className={cn(
+              "px-6 py-3 rounded-2xl shadow-xl border backdrop-blur-md flex items-center gap-3 min-w-[240px]",
+              toast.type === 'success' ? "bg-emerald-500/90 border-emerald-400 text-white" :
+              toast.type === 'error' ? "bg-rose-500/90 border-rose-400 text-white" :
+              "bg-slate-800/90 border-slate-700 text-white"
+            )}
+          >
+            {toast.type === 'success' && <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">✓</div>}
+            {toast.type === 'error' && <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">!</div>}
+            <span className="font-medium">{toast.message}</span>
+          </motion.div>
+        ))}
+      </div>
     </div>
   );
 }
