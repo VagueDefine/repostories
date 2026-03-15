@@ -134,10 +134,12 @@ export const saveConfig = (config: StorageConfig) => {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
 };
 
-export const syncToGithub = async (config: StorageConfig, data: AppData) => {
+export const syncToGithub = async (config: StorageConfig, data: AppData, isNotebook: boolean = false) => {
   if (config.type !== 'github' || !config.github) return;
   
-  const { token, repo, branch, path } = config.github;
+  const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch, path } = config.github;
+  const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
+  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
   const mdContent = stringifyToMd(data, config);
   
   try {
@@ -173,10 +175,12 @@ export const syncToGithub = async (config: StorageConfig, data: AppData) => {
   }
 };
 
-export const fetchGithubTree = async (config: StorageConfig, path: string = '', repo: string, branch: string) => {
+export const fetchGithubTree = async (config: StorageConfig, path: string = '', isNotebook: boolean = false) => {
   if (config.type !== 'github' || !config.github) return [];
   
-  const { token } = config.github;
+  const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+  const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
+  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
   const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
   
   try {
@@ -192,10 +196,12 @@ export const fetchGithubTree = async (config: StorageConfig, path: string = '', 
   return [];
 };
 
-export const fetchGithubFile = async (config: StorageConfig, path: string, repo: string, branch: string) => {
+export const fetchGithubFile = async (config: StorageConfig, path: string, isNotebook: boolean = false) => {
   if (config.type !== 'github' || !config.github) return null;
   
-  const { token } = config.github;
+  const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+  const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
+  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
   const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
   
   try {

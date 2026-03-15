@@ -282,7 +282,7 @@ export default function App() {
       }
     }
     const data: AppData = { bookmarks, profile, content: markdownContent };
-    const success = await storage.syncToGithub(config, data);
+    const success = await storage.syncToGithub(config, data, true);
     if (success) {
       addToast('同步成功！您的 .md 文件已更新。', 'success');
     } else {
