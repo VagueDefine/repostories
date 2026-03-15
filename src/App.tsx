@@ -1050,13 +1050,37 @@ export default function App() {
                           />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">头像 URL</label>
-                          <input 
-                            type="text" 
-                            className="input-field" 
-                            value={profile.avatar}
-                            onChange={(e) => setProfile({ ...profile, avatar: e.target.value })}
-                          />
+                          <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">头像</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text" 
+                              className="input-field flex-1" 
+                              placeholder="输入头像 URL..."
+                              value={profile.avatar}
+                              onChange={(e) => setProfile({ ...profile, avatar: e.target.value })}
+                            />
+                            <label className="btn-secondary flex-shrink-0 cursor-pointer flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors">
+                              <Upload size={18} />
+                              <span className="hidden sm:inline">上传</span>
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = (event) => {
+                                      const base64 = event.target?.result as string;
+                                      setProfile({ ...profile, avatar: base64 });
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                  e.target.value = '';
+                                }}
+                              />
+                            </label>
+                          </div>
                         </div>
                       </div>
                       <div className="space-y-2">
