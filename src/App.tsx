@@ -40,8 +40,14 @@ export default function App() {
   const [showAIModelModal, setShowAIModelModal] = useState(false);
   const [editingAIModel, setEditingAIModel] = useState<AIModelConfig | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [analysisError, setAnalysisError] = useState<React.ReactNode | null>(null);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+
+  // GitHub Fetching State
+  const [githubRepos, setGithubRepos] = useState<{ full_name: string }[]>([]);
+  const [githubBranches, setGithubBranches] = useState<{ name: string }[]>([]);
+  const [isFetchingGithub, setIsFetchingGithub] = useState(false);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -202,6 +208,48 @@ export default function App() {
     setShowAIModelModal(false);
     setEditingAIModel(null);
     addToast('AI 模型配置已保存', 'success');
+  };
+
+  const fetchGithubRepos = async () => {
+    if (!config.github?.token) {
+      addToast('请先输入 GitHub Token', 'error');
+      return;
+    }
+    setIsFetchingGithub(true);
+    try {
+      const res = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+        headers: { Authorization: `token ${config.github.token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGithubRepos(data);
+        addToast(`成功加载 ${data.length} 个仓库`, 'success');
+      } else {
+        addToast('加载仓库失败，请检查 Token 权限', 'error');
+      }
+    } catch (err) {
+      addToast('网络错误，无法连接 GitHub', 'error');
+    } finally {
+      setIsFetchingGithub(false);
+    }
+  };
+
+  const fetchGithubBranches = async (repo: string) => {
+    if (!config.github?.token || !repo) return;
+    setIsFetchingGithub(true);
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/branches`, {
+        headers: { Authorization: `token ${config.github.token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGithubBranches(data);
+      }
+    } catch (err) {
+      console.error('Fetch branches failed', err);
+    } finally {
+      setIsFetchingGithub(false);
+    }
   };
 
   const handleDeleteAIModel = (id: string) => {
@@ -633,46 +681,142 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="max-w-4xl mx-auto"
             >
-              <div className="glass rounded-[2.5rem] overflow-hidden">
+              <div className="glass rounded-[2.5rem] overflow-hidden relative">
+                {/* Edit Toggle Button */}
+                <button 
+                  onClick={() => setIsEditingProfile(!isEditingProfile)}
+                  className="absolute top-6 right-6 z-10 w-12 h-12 glass rounded-2xl flex items-center justify-center text-slate-600 hover:text-indigo-600 transition-all shadow-lg"
+                  title={isEditingProfile ? "取消编辑" : "编辑个人资料"}
+                >
+                  {isEditingProfile ? <X size={20} /> : <Edit3 size={20} />}
+                </button>
+
                 <div className="h-48 bg-gradient-to-r from-indigo-500 to-purple-600 relative">
-                  <div className="absolute -bottom-16 left-12 p-1 bg-white rounded-3xl shadow-xl">
+                  <div className="absolute -bottom-16 left-12 p-1 bg-white rounded-3xl shadow-xl group">
                     <img 
                       src={profile.avatar} 
                       alt="Avatar" 
                       className="w-32 h-32 rounded-[1.25rem] object-cover"
                       referrerPolicy="no-referrer"
                     />
+                    {isEditingProfile && (
+                      <div className="absolute inset-0 bg-black/40 rounded-[1.25rem] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                        <Plus size={24} className="text-white" />
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="pt-20 pb-12 px-12">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-                    <div>
-                      <h1 className="text-4xl font-bold mb-2 text-slate-800">{profile.name}</h1>
-                      <p className="text-xl text-slate-500">{profile.bio}</p>
-                    </div>
-                    <div className="flex gap-3">
-                      {profile.links.map((link, idx) => (
-                        <a 
-                          key={idx} 
-                          href={link.url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="w-12 h-12 glass rounded-2xl flex items-center justify-center text-slate-600 hover:text-indigo-600 hover:scale-110 transition-all border border-slate-200"
-                        >
-                          {link.icon === 'github' ? <Github size={20} /> : <Twitter size={20} />}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
 
-                  <div className="prose prose-slate max-w-none bg-white p-10 rounded-[2rem] border border-slate-100 shadow-sm">
-                    <div className="flex items-center justify-between mb-6">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <FileText size={14} /> Markdown 内容
-                      </span>
+                <div className="pt-20 pb-12 px-12">
+                  {isEditingProfile ? (
+                    <div className="space-y-8">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">姓名</label>
+                          <input 
+                            type="text" 
+                            className="input-field" 
+                            value={profile.name}
+                            onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">头像 URL</label>
+                          <input 
+                            type="text" 
+                            className="input-field" 
+                            value={profile.avatar}
+                            onChange={(e) => setProfile({ ...profile, avatar: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">简介</label>
+                        <input 
+                          type="text" 
+                          className="input-field" 
+                          value={profile.bio}
+                          onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="space-y-4">
+                        <label className="text-sm font-bold text-slate-400 uppercase tracking-widest block">社交链接</label>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {profile.links.map((link, idx) => (
+                            <div key={idx} className="flex gap-2 items-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                              <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-slate-400">
+                                {link.icon === 'github' ? <Github size={16} /> : <Twitter size={16} />}
+                              </div>
+                              <input 
+                                type="text" 
+                                className="flex-1 bg-transparent border-none text-sm outline-none"
+                                value={link.url}
+                                onChange={(e) => {
+                                  const newLinks = [...profile.links];
+                                  newLinks[idx] = { ...newLinks[idx], url: e.target.value };
+                                  setProfile({ ...profile, links: newLinks });
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <FileText size={14} /> Markdown 内容 (DIY 区域)
+                        </label>
+                        <textarea 
+                          className="input-field min-h-[300px] font-mono text-sm leading-relaxed p-6"
+                          value={markdownContent}
+                          onChange={(e) => setMarkdownContent(e.target.value)}
+                          placeholder="在这里输入您的 Markdown 内容..."
+                        />
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          setIsEditingProfile(false);
+                          addToast('个人资料已保存', 'success');
+                        }}
+                        className="btn-primary w-full py-4 flex items-center justify-center gap-2"
+                      >
+                        <Save size={20} /> 完成 DIY
+                      </button>
                     </div>
-                    <Markdown>{markdownContent}</Markdown>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+                        <div>
+                          <h1 className="text-4xl font-bold mb-2 text-slate-800">{profile.name}</h1>
+                          <p className="text-xl text-slate-500">{profile.bio}</p>
+                        </div>
+                        <div className="flex gap-3">
+                          {profile.links.map((link, idx) => (
+                            <a 
+                              key={idx} 
+                              href={link.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="w-12 h-12 glass rounded-2xl flex items-center justify-center text-slate-600 hover:text-indigo-600 hover:scale-110 transition-all border border-slate-200"
+                            >
+                              {link.icon === 'github' ? <Github size={20} /> : <Twitter size={20} />}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="prose prose-slate max-w-none bg-white p-10 rounded-[2rem] border border-slate-100 shadow-sm">
+                        <div className="flex items-center justify-between mb-6">
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                            <FileText size={14} /> Markdown 内容
+                          </span>
+                        </div>
+                        <Markdown>{markdownContent}</Markdown>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -715,41 +859,102 @@ export default function App() {
                       <div className="space-y-4 pt-4">
                         <div className="space-y-2">
                           <label className="text-sm font-medium text-slate-600">GitHub Token</label>
-                          <input 
-                            type="password" 
-                            className="input-field" 
-                            value={config.github?.token || ''}
-                            onChange={(e) => setConfig({
-                              ...config,
-                              github: { ...(config.github || { repo: '', branch: 'main', path: 'zenspace.md' }), token: e.target.value }
-                            })}
-                          />
+                          <div className="flex gap-2">
+                            <input 
+                              type="password" 
+                              className="input-field" 
+                              placeholder="ghp_xxxxxxxxxxxx"
+                              value={config.github?.token || ''}
+                              onChange={(e) => setConfig({
+                                ...config,
+                                github: { ...(config.github || { repo: '', branch: 'main', path: 'zenspace.md' }), token: e.target.value }
+                              })}
+                            />
+                            <button 
+                              onClick={fetchGithubRepos}
+                              disabled={isFetchingGithub || !config.github?.token}
+                              className="btn-secondary px-4 py-2 whitespace-nowrap flex items-center gap-2"
+                            >
+                              {isFetchingGithub ? <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Download size={16} />}
+                              加载仓库
+                            </button>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <label className="text-sm font-medium text-slate-600">仓库 (User/Repo)</label>
-                            <input 
-                              type="text" 
-                              className="input-field" 
-                              value={config.github?.repo || ''}
-                              onChange={(e) => setConfig({
-                                ...config,
-                                github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo: e.target.value }
-                              })}
-                            />
+                            {githubRepos.length > 0 ? (
+                              <select 
+                                className="input-field"
+                                value={config.github?.repo || ''}
+                                onChange={(e) => {
+                                  const repo = e.target.value;
+                                  setConfig({
+                                    ...config,
+                                    github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo }
+                                  });
+                                  fetchGithubBranches(repo);
+                                }}
+                              >
+                                <option value="">选择仓库</option>
+                                {githubRepos.map(r => (
+                                  <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input 
+                                type="text" 
+                                className="input-field" 
+                                placeholder="username/repo"
+                                value={config.github?.repo || ''}
+                                onChange={(e) => setConfig({
+                                  ...config,
+                                  github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo: e.target.value }
+                                })}
+                              />
+                            )}
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-600">存储路径 (.md)</label>
-                            <input 
-                              type="text" 
-                              className="input-field" 
-                              value={config.github?.path || 'zenspace.md'}
-                              onChange={(e) => setConfig({
-                                ...config,
-                                github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
-                              })}
-                            />
+                            <label className="text-sm font-medium text-slate-600">分支</label>
+                            {githubBranches.length > 0 ? (
+                              <select 
+                                className="input-field"
+                                value={config.github?.branch || 'main'}
+                                onChange={(e) => setConfig({
+                                  ...config,
+                                  github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch: e.target.value }
+                                })}
+                              >
+                                {githubBranches.map(b => (
+                                  <option key={b.name} value={b.name}>{b.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input 
+                                type="text" 
+                                className="input-field" 
+                                placeholder="main"
+                                value={config.github?.branch || 'main'}
+                                onChange={(e) => setConfig({
+                                  ...config,
+                                  github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch: e.target.value }
+                                })}
+                              />
+                            )}
                           </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-600">存储路径 (.md)</label>
+                          <input 
+                            type="text" 
+                            className="input-field" 
+                            placeholder="zenspace.md"
+                            value={config.github?.path || 'zenspace.md'}
+                            onChange={(e) => setConfig({
+                              ...config,
+                              github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                            })}
+                          />
                         </div>
                         <button 
                           onClick={handleSync}
