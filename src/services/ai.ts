@@ -72,7 +72,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
       };
     }
     if (message.toLowerCase().includes('你好') || message.toLowerCase().includes('hello')) {
-      return { text: "你好！我是 ZenSpace 的智能助手。我可以帮你管理书签、整理分类，或者回答关于你收藏内容的问题。" };
+      return { text: "你好！我是你的AI助手。我可以帮你管理书签、整理分类，或者回答关于你收藏内容的问题。" };
     }
     return { text: `这是一个演示响应。你刚才说的是: "${message}"。在演示模式下，我无法访问真实的 AI 模型，但你可以验证聊天界面的交互功能。` };
   }
@@ -105,7 +105,7 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
+              { role: "system", content: `你是一个名为 你的AI助手 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
 
 重要规则：
 1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
@@ -170,7 +170,7 @@ ${context}` },
           }
         ],
         config: {
-          systemInstruction: `你是一个名为 ZenSpace 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
+          systemInstruction: `你是一个名为 你的AI助手 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
 
 重要规则：
 1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
