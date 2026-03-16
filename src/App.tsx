@@ -833,39 +833,39 @@ export default function App() {
           <span className="hidden lg:block font-bold text-xl tracking-tight text-slate-800">ZenSpace</span>
         </div>
 
-        <div className="flex md:flex-col gap-2 md:gap-4">
-          <NavButton 
-            active={activeTab === 'bookmarks'} 
-            onClick={() => setActiveTab('bookmarks')}
-            icon={<Globe size={20} />}
-            label="收藏夹"
-          />
-          <NavButton 
-            active={activeTab === 'profile'} 
-            onClick={() => setActiveTab('profile')}
-            icon={<User size={20} />}
-            label="个人资料"
-          />
-          <NavButton 
-            active={activeTab === 'ai'} 
-            onClick={() => setActiveTab('ai')}
-            icon={<Sparkles size={20} />}
-            label="AI 助手"
-          />
-          <NavButton 
-            active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')}
-            icon={<Settings size={20} />}
-            label="设置"
-          />
-        </div>
-
-        <div className="hidden md:flex flex-col items-center gap-4 lg:w-full lg:px-4">
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-emerald-500/20">
-            <img src={profile.avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          <div className="flex md:flex-col gap-2 md:gap-4">
+            <NavButton 
+              active={activeTab === 'bookmarks'} 
+              onClick={() => setActiveTab('bookmarks')}
+              icon={<Globe size={20} />}
+              label="收藏夹"
+            />
+            <NavButton 
+              active={activeTab === 'profile'} 
+              onClick={() => setActiveTab('profile')}
+              icon={<User size={20} />}
+              label="个人资料"
+            />
+            <NavButton 
+              active={activeTab === 'ai'} 
+              onClick={() => setActiveTab('ai')}
+              icon={<Sparkles size={20} />}
+              label="AI 助手"
+            />
+            <NavButton 
+              active={activeTab === 'settings'} 
+              onClick={() => setActiveTab('settings')}
+              icon={<Settings size={20} />}
+              label="设置"
+            />
           </div>
-        </div>
-      </nav>
+
+          <div className="hidden md:flex flex-col items-center gap-4 lg:w-full lg:px-4">
+            <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-emerald-500/20">
+              <img src={profile.avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            </div>
+          </div>
+        </nav>
 
       {/* Main Content */}
       <main className="flex-1 p-4 md:p-8 lg:p-12 overflow-y-auto">
