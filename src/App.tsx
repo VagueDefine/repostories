@@ -476,7 +476,7 @@ export default function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: `Update ${selectedFile.name} via ZenSpace`,
+          message: `Update ${selectedFile.name} via WangLI`,
           content: btoa(unescape(encodeURIComponent(mdContent))),
           branch,
           sha: selectedFile.sha
@@ -519,7 +519,7 @@ export default function App() {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            message: `Create ${name} via ZenSpace`,
+            message: `Create ${name} via WangLI`,
             content: btoa(''), // Empty file
             branch
           })
@@ -537,7 +537,7 @@ export default function App() {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            message: `Create folder ${name} via ZenSpace`,
+            message: `Create folder ${name} via WangLI`,
             content: btoa(''),
             branch
           })
@@ -569,7 +569,7 @@ export default function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: `Delete ${node.name} via ZenSpace`,
+          message: `Delete ${node.name} via WangLI`,
           sha: node.sha,
           branch
         })
@@ -830,7 +830,7 @@ export default function App() {
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
             <LayoutGrid size={24} />
           </div>
-          <span className="hidden lg:block font-bold text-xl tracking-tight text-slate-800">ZenSpace</span>
+          <span className="hidden lg:block font-bold text-xl tracking-tight text-slate-800">WangLI</span>
         </div>
 
           <div className="flex md:flex-col gap-2 md:gap-4">
