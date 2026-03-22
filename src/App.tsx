@@ -7,7 +7,7 @@ import {
   Info, LogOut, Menu, X, FileText, Download,
   Send, Bot, Key, Link as LinkIcon, Edit3,
   ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload,
-  Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus
+  Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus, RotateCw
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -27,6 +27,7 @@ const FileTreeNode = ({
   onToggle, 
   onDelete,
   onCreate,
+  onUpload,
   selectedPath,
   level = 0 
 }: { 
@@ -35,11 +36,14 @@ const FileTreeNode = ({
   onToggle: (node: FileNode) => void; 
   onDelete: (node: FileNode) => void;
   onCreate: (type: 'file' | 'folder', path: string) => void;
+  onUpload: (file: File, path: string) => void;
   selectedPath?: string;
   level?: number;
 }) => {
   const isExpanded = expandedFolders.has(node.path);
   const isSelected = selectedPath === node.path;
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   return (
     <div className="select-none">
@@ -82,6 +86,23 @@ const FileTreeNode = ({
               >
                 <FolderPlus size={14} />
               </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                className="p-1 hover:text-indigo-600"
+                title="上传至此"
+              >
+                <Upload size={14} />
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  className="hidden" 
+                  multiple 
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    files.forEach(file => onUpload(file, node.path));
+                  }} 
+                />
+              </button>
             </>
           )}
           <button 
@@ -104,6 +125,7 @@ const FileTreeNode = ({
               onToggle={onToggle}
               onDelete={onDelete}
               onCreate={onCreate}
+              onUpload={onUpload}
               selectedPath={selectedPath}
               level={level + 1}
             />
@@ -393,11 +415,12 @@ export default function App() {
     }
   };
 
-  const loadProfileFiles = async (path: string = '') => {
-    if (!config.github?.token || (!config.github?.repo && !config.github?.notebookRepo)) return;
+  const loadProfileFiles = async (path: string = '', overrideConfig?: StorageConfig) => {
+    const activeConfig = overrideConfig || config;
+    if (!activeConfig.github?.token || (!activeConfig.github?.repo && !activeConfig.github?.notebookRepo)) return;
     setIsFetchingFiles(true);
     try {
-      const data = await storage.fetchGithubTree(config, path, true);
+      const data = await storage.fetchGithubTree(activeConfig, path, true);
       const nodes: FileNode[] = data.map((item: any) => ({
         id: item.sha,
         name: item.name,
@@ -456,6 +479,75 @@ export default function App() {
         setSelectedFile(node);
       }
       setIsFetchingFiles(false);
+    }
+  };
+
+  const handleFileUpload = async (file: File, parentPath: string = '') => {
+    if (!config.github) return;
+    
+    const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
+    const repo = notebookRepo || defaultRepo;
+    const branch = notebookBranch || defaultBranch;
+    const path = parentPath ? `${parentPath}/${file.name}` : file.name;
+
+    setIsFetchingFiles(true);
+    try {
+      // Read file as base64
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = (e.target?.result as string).split(',')[1];
+        
+        try {
+          const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+            method: 'PUT',
+            headers: {
+              Authorization: `token ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: `Upload ${file.name} via WangLI`,
+              content: base64,
+              branch
+            })
+          });
+
+          if (putRes.ok) {
+            addToast(`文件 ${file.name} 上传成功`, 'success');
+            loadProfileFiles(parentPath);
+          } else {
+            const error = await putRes.json();
+            addToast(`上传失败: ${error.message}`, 'error');
+          }
+        } catch (err) {
+          addToast('上传过程中发生网络错误', 'error');
+        } finally {
+          setIsFetchingFiles(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      addToast('读取文件失败', 'error');
+      setIsFetchingFiles(false);
+    }
+  };
+
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      files.forEach(file => handleFileUpload(file));
     }
   };
 
@@ -1218,13 +1310,14 @@ export default function App() {
                                   value={config.github?.notebookRepo || ''}
                                   onChange={(e) => {
                                     const repo = e.target.value;
-                                    setConfig({
+                                    const newConfig = {
                                       ...config,
                                       github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), notebookRepo: repo }
-                                    });
+                                    };
+                                    setConfig(newConfig);
                                     if (repo) {
                                       fetchGithubBranches(repo);
-                                      loadProfileFiles();
+                                      loadProfileFiles('', newConfig);
                                     }
                                   }}
                                 >
@@ -1235,11 +1328,12 @@ export default function App() {
                                   className="input-field text-xs" 
                                   value={config.github?.notebookBranch || config.github?.branch || 'main'}
                                   onChange={(e) => {
-                                    setConfig({
+                                    const newConfig = {
                                       ...config,
                                       github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), notebookBranch: e.target.value }
-                                    });
-                                    loadProfileFiles();
+                                    };
+                                    setConfig(newConfig);
+                                    loadProfileFiles('', newConfig);
                                   }}
                                 >
                                   {githubBranches.map(b => (
@@ -1248,13 +1342,16 @@ export default function App() {
                                 </select>
                               </div>
                             </div>
-                            <button 
+                            <motion.button 
                               onClick={() => loadProfileFiles()}
-                              className="w-10 h-10 glass rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all"
+                              whileHover={{ scale: 1.05, backgroundColor: 'rgba(255, 255, 255, 0.8)' }}
+                              whileTap={{ scale: 0.95 }}
+                              className="w-10 h-10 glass rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all shadow-sm"
                               title="刷新文件列表"
+                              disabled={isFetchingFiles}
                             >
-                              <Download size={18} />
-                            </button>
+                              <RotateCw size={18} className={cn(isFetchingFiles && "animate-spin text-indigo-600")} />
+                            </motion.button>
                           </div>
 
                           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1263,41 +1360,66 @@ export default function App() {
                               <div className="flex items-center gap-2 mb-2">
                                 <button 
                                   onClick={() => handleCreateNew('file')}
-                                  className="flex-1 py-2 px-3 glass rounded-xl text-xs font-bold text-slate-600 hover:text-indigo-600 flex items-center justify-center gap-2 transition-all"
+                                  className="w-10 h-10 glass rounded-xl text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all"
+                                  title="新建文件"
                                 >
-                                  <FilePlus size={14} /> 新建文件
+                                  <FilePlus size={18} />
                                 </button>
                                 <button 
                                   onClick={() => handleCreateNew('folder')}
-                                  className="flex-1 py-2 px-3 glass rounded-xl text-xs font-bold text-slate-600 hover:text-indigo-600 flex items-center justify-center gap-2 transition-all"
+                                  className="w-10 h-10 glass rounded-xl text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all"
+                                  title="新建文件夹"
                                 >
-                                  <FolderPlus size={14} /> 新建文件夹
+                                  <FolderPlus size={18} />
                                 </button>
+                                <label className="w-10 h-10 glass rounded-xl text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer" title="上传文件/照片">
+                                  <Upload size={18} />
+                                  <input 
+                                    type="file" 
+                                    className="hidden" 
+                                    multiple 
+                                    onChange={(e) => {
+                                      const files = Array.from(e.target.files || []);
+                                      files.forEach(file => handleFileUpload(file));
+                                    }} 
+                                  />
+                                </label>
                               </div>
                               
-                              {isFetchingFiles && profileFiles.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-                                  <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
-                                  <p className="text-sm">正在加载 GitHub 文件...</p>
-                                </div>
-                              ) : (
-                                <div className="space-y-1">
-                                  {profileFiles.map(node => (
-                                    <FileTreeNode 
-                                      key={node.path} 
-                                      node={node} 
-                                      expandedFolders={expandedFolders}
-                                      onToggle={handleFileClick}
-                                      onDelete={handleDeleteFile}
-                                      onCreate={handleCreateNew}
-                                      selectedPath={selectedFile?.path}
-                                    />
-                                  ))}
-                                  {profileFiles.length === 0 && !isFetchingFiles && (
-                                    <p className="text-sm text-slate-400 text-center py-8">未找到文件</p>
-                                  )}
-                                </div>
-                              )}
+                              <div 
+                                className={cn(
+                                  "space-y-1 min-h-[200px] rounded-2xl transition-all border-2 border-transparent",
+                                  isDragging && "border-indigo-400 bg-indigo-50/30 border-dashed"
+                                )}
+                                onDragOver={handleDragOver}
+                                onDragLeave={handleDragLeave}
+                                onDrop={handleDrop}
+                              >
+                                {isFetchingFiles && profileFiles.length === 0 ? (
+                                  <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                                    <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
+                                    <p className="text-sm">正在加载 GitHub 文件...</p>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {profileFiles.map(node => (
+                                      <FileTreeNode 
+                                        key={node.path} 
+                                        node={node} 
+                                        expandedFolders={expandedFolders}
+                                        onToggle={handleFileClick}
+                                        onDelete={handleDeleteFile}
+                                        onCreate={handleCreateNew}
+                                        onUpload={handleFileUpload}
+                                        selectedPath={selectedFile?.path}
+                                      />
+                                    ))}
+                                    {profileFiles.length === 0 && !isFetchingFiles && (
+                                      <p className="text-sm text-slate-400 text-center py-8">未找到文件，或拖拽文件至此上传</p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
 
                             {/* File Preview/Editor */}

@@ -190,10 +190,17 @@ export const fetchGithubTree = async (config: StorageConfig, path: string = '', 
     if (res.ok) {
       return await res.json();
     }
+    
+    const errorData = await res.json().catch(() => ({}));
+    if (res.status === 404 && (errorData.message?.includes('empty') || errorData.message?.includes('No commit found'))) {
+      return [];
+    }
+    
+    throw new Error(errorData.message || `GitHub API Error: ${res.status}`);
   } catch (error) {
     console.error('Fetch GitHub tree failed:', error);
+    throw error;
   }
-  return [];
 };
 
 export const fetchGithubFile = async (config: StorageConfig, path: string, isNotebook: boolean = false) => {
@@ -215,8 +222,15 @@ export const fetchGithubFile = async (config: StorageConfig, path: string, isNot
         sha: data.sha
       };
     }
+    
+    const errorData = await res.json().catch(() => ({}));
+    if (res.status === 404 && (errorData.message?.includes('empty') || errorData.message?.includes('No commit found'))) {
+      return null;
+    }
+    
+    throw new Error(errorData.message || `GitHub API Error: ${res.status}`);
   } catch (error) {
     console.error('Fetch GitHub file failed:', error);
+    throw error;
   }
-  return null;
 };
