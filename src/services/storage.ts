@@ -135,18 +135,26 @@ export const saveConfig = (config: StorageConfig) => {
 };
 
 export const syncToGithub = async (config: StorageConfig, data: AppData, isNotebook: boolean = false) => {
-  if (config.type !== 'github' || !config.github) return;
+  if (config.type !== 'github' || !config.github || !config.github.token || !config.github.repo) return false;
   
-  const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch, path } = config.github;
+  const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch, path: defaultPath } = config.github;
   const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
-  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
+  const branch = (isNotebook ? (notebookBranch || defaultBranch) : defaultBranch) || 'main';
+  const path = defaultPath || 'zenspace.md';
   const mdContent = stringifyToMd(data, config);
   
+  const cleanToken = token.trim();
+  const encodedPath = path.split('/').map(p => encodeURIComponent(p)).join('/');
+  
   try {
-    const getUrl = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
-    const getRes = await fetch(getUrl, {
-      headers: { Authorization: `token ${token}` }
-    });
+    const getUrl = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
+    const headers = { 
+      'Authorization': `Bearer ${cleanToken}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+
+    const getRes = await fetch(getUrl, { headers });
     
     let sha;
     if (getRes.ok) {
@@ -154,10 +162,10 @@ export const syncToGithub = async (config: StorageConfig, data: AppData, isNoteb
       sha = fileData.sha;
     }
     
-    const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+    const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/${encodedPath}`, {
       method: 'PUT',
       headers: {
-        Authorization: `token ${token}`,
+        ...headers,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -176,16 +184,24 @@ export const syncToGithub = async (config: StorageConfig, data: AppData, isNoteb
 };
 
 export const fetchGithubTree = async (config: StorageConfig, path: string = '', isNotebook: boolean = false) => {
-  if (config.type !== 'github' || !config.github) return [];
+  if (config.type !== 'github' || !config.github || !config.github.token || !config.github.repo) return [];
   
   const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
   const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
-  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
-  const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+  const branch = (isNotebook ? (notebookBranch || defaultBranch) : defaultBranch) || 'main';
+  
+  const cleanToken = token.trim();
+  const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+  const encodedPath = cleanPath ? cleanPath.split('/').map(p => encodeURIComponent(p)).join('/') : '';
+  const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
   
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `token ${token}` }
+      headers: { 
+        'Authorization': `Bearer ${cleanToken}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
     });
     if (res.ok) {
       return await res.json();
@@ -204,16 +220,24 @@ export const fetchGithubTree = async (config: StorageConfig, path: string = '', 
 };
 
 export const fetchGithubFile = async (config: StorageConfig, path: string, isNotebook: boolean = false) => {
-  if (config.type !== 'github' || !config.github) return null;
+  if (config.type !== 'github' || !config.github || !config.github.token || !config.github.repo) return null;
   
   const { token, repo: defaultRepo, branch: defaultBranch, notebookRepo, notebookBranch } = config.github;
   const repo = isNotebook ? (notebookRepo || defaultRepo) : defaultRepo;
-  const branch = isNotebook ? (notebookBranch || defaultBranch) : defaultBranch;
-  const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+  const branch = (isNotebook ? (notebookBranch || defaultBranch) : defaultBranch) || 'main';
+  
+  const cleanToken = token.trim();
+  const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+  const encodedPath = cleanPath.split('/').map(p => encodeURIComponent(p)).join('/');
+  const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
   
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `token ${token}` }
+      headers: { 
+        'Authorization': `Bearer ${cleanToken}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
     });
     if (res.ok) {
       const data = await res.json();

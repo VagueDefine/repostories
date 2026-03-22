@@ -7,7 +7,8 @@ import {
   Info, LogOut, Menu, X, FileText, Download,
   Send, Bot, Key, Link as LinkIcon, Edit3,
   ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload,
-  Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus, RotateCw
+  Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus, RotateCw,
+  Loader2, RefreshCw
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -162,6 +163,7 @@ export default function App() {
   // GitHub Fetching State
   const [githubRepos, setGithubRepos] = useState<{ full_name: string }[]>([]);
   const [githubBranches, setGithubBranches] = useState<{ name: string }[]>([]);
+  const [githubFiles, setGithubFiles] = useState<{ name: string; path: string }[]>([]);
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
 
   // Profile Files State
@@ -215,6 +217,12 @@ export default function App() {
     storage.saveConfig(config);
   }, [config]);
 
+  useEffect(() => {
+    if (config.type === 'github' && config.github?.token && config.github?.repo && config.github?.branch && githubFiles.length === 0) {
+      fetchGithubFiles(config.github.repo, config.github.branch);
+    }
+  }, [config.type, config.github?.token, config.github?.repo, config.github?.branch, githubFiles.length]);
+
   const categories = useMemo(() => {
     const cats = Array.from(new Set(bookmarks.map(b => b.category)));
     return ['全部', ...cats];
@@ -249,45 +257,64 @@ export default function App() {
       return;
     }
 
-    let finalTitle = newBookmark.title.trim();
+    let finalTitle = newBookmark.title?.trim() || '';
     if (!finalTitle && newBookmark.url) {
       finalTitle = newBookmark.url.split('/').pop() || newBookmark.url;
     }
     
-    const bookmark: Bookmark = {
-      id: Math.random().toString(36).substr(2, 9),
-      title: finalTitle || '未命名书签',
-      url: newBookmark.type === 'folder' ? '' : (newBookmark.url?.trim().startsWith('http') ? newBookmark.url.trim() : `https://${newBookmark.url?.trim()}`),
-      category: newBookmark.category?.trim() || '常用',
-      description: newBookmark.description?.trim(),
-      createdAt: Date.now(),
-      type: newBookmark.type || 'link',
-      parentId: newBookmark.parentId || undefined
-    };
-    
-    setBookmarks([bookmark, ...bookmarks]);
-    setIsAddModalOpen(false);
-    
-    // If title was empty, trigger AI analysis in background for the newly added bookmark
-    if (!newBookmark.title.trim() && bookmark.type === 'link' && activeAIModel?.apiKey) {
-      try {
-        const result = await analyzeUrl(activeAIModel, bookmark.url!, folders);
-        if (result) {
-          setBookmarks(prev => prev.map(b => b.id === bookmark.id ? {
-            ...b,
-            title: result.title || b.title,
-            description: result.description || b.description,
-            category: result.category || b.category,
-            parentId: result.folderId === 'root' ? undefined : (result.folderId || b.parentId)
-          } : b));
-          addToast('已自动补全书签信息', 'success');
+    if (newBookmark.id) {
+      // Update existing bookmark
+      setBookmarks(prev => prev.map(b => b.id === newBookmark.id ? {
+        ...b,
+        title: finalTitle || b.title,
+        url: newBookmark.type === 'folder' ? '' : (newBookmark.url?.trim().startsWith('http') ? newBookmark.url.trim() : `https://${newBookmark.url?.trim()}`),
+        category: newBookmark.category?.trim() || b.category,
+        description: newBookmark.description?.trim(),
+        parentId: newBookmark.parentId || undefined
+      } : b));
+      addToast('已更新内容', 'success');
+    } else {
+      // Create new bookmark
+      const bookmark: Bookmark = {
+        id: Math.random().toString(36).substr(2, 9),
+        title: finalTitle || '未命名书签',
+        url: newBookmark.type === 'folder' ? '' : (newBookmark.url?.trim().startsWith('http') ? newBookmark.url.trim() : `https://${newBookmark.url?.trim()}`),
+        category: newBookmark.category?.trim() || '常用',
+        description: newBookmark.description?.trim(),
+        createdAt: Date.now(),
+        type: newBookmark.type || 'link',
+        parentId: newBookmark.parentId || undefined
+      };
+      
+      setBookmarks([bookmark, ...bookmarks]);
+      
+      // If title was empty, trigger AI analysis in background for the newly added bookmark
+      if (!newBookmark.title?.trim() && bookmark.type === 'link' && activeAIModel?.apiKey) {
+        try {
+          const result = await analyzeUrl(activeAIModel, bookmark.url!, folders);
+          if (result) {
+            setBookmarks(prev => prev.map(b => b.id === bookmark.id ? {
+              ...b,
+              title: result.title || b.title,
+              description: result.description || b.description,
+              category: result.category || b.category,
+              parentId: result.folderId === 'root' ? undefined : (result.folderId || b.parentId)
+            } : b));
+            addToast('已自动补全书签信息', 'success');
+          }
+        } catch (error) {
+          console.error("Background analysis failed:", error);
         }
-      } catch (error) {
-        console.error("Background analysis failed:", error);
       }
     }
-
+    
+    setIsAddModalOpen(false);
     setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link' });
+  };
+
+  const handleEditBookmark = (bookmark: Bookmark) => {
+    setNewBookmark(bookmark);
+    setIsAddModalOpen(true);
   };
 
   const handleDeleteBookmark = (id: string) => {
@@ -304,7 +331,7 @@ export default function App() {
       }
     }
     const data: AppData = { bookmarks, profile, content: markdownContent };
-    const success = await storage.syncToGithub(config, data, true);
+    const success = await storage.syncToGithub(config, data, false);
     if (success) {
       addToast('同步成功！您的 .md 文件已更新。', 'success');
     } else {
@@ -317,16 +344,17 @@ export default function App() {
     const { path } = config.github;
     
     setIsFetchingFiles(true);
+    addToast('正在从 GitHub 加载数据...', 'info');
     try {
       const fileData = await storage.fetchGithubFile(config, path);
       if (fileData) {
         const parsed = storage.parseFromMd(fileData.content);
         
         // Only update parts that are enabled for sync
-        if (config.github.syncBookmarks) {
+        if (config.github.syncBookmarks !== false) {
           setBookmarks(parsed.bookmarks);
         }
-        if (config.github.syncProfile) {
+        if (config.github.syncProfile !== false) {
           setProfile(parsed.profile);
           setMarkdownContent(parsed.content);
         }
@@ -387,6 +415,9 @@ export default function App() {
         const data = await res.json();
         setGithubRepos(data);
         addToast(`成功加载 ${data.length} 个仓库`, 'success');
+        if (config.github.repo) {
+          fetchGithubBranches(config.github.repo);
+        }
       } else {
         addToast('加载仓库失败，请检查 Token 权限', 'error');
       }
@@ -407,9 +438,44 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setGithubBranches(data);
+        // If there's a branch, fetch files for the first branch or current branch
+        const currentBranch = config.github?.branch || (data.length > 0 ? data[0].name : 'main');
+        fetchGithubFiles(repo, currentBranch);
       }
     } catch (err) {
       console.error('Fetch branches failed', err);
+    } finally {
+      setIsFetchingGithub(false);
+    }
+  };
+
+  const fetchGithubFiles = async (repo: string, branch: string) => {
+    if (!config.github?.token || !repo || !branch) return;
+    setIsFetchingGithub(true);
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, {
+        headers: { Authorization: `token ${config.github.token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const files = data.tree
+          .filter((item: any) => item.type === 'blob' && item.path.toLowerCase().endsWith('.md'))
+          .map((item: any) => ({ name: item.path, path: item.path }));
+        setGithubFiles(files);
+      } else {
+        const res2 = await fetch(`https://api.github.com/repos/${repo}/contents?ref=${branch}`, {
+          headers: { Authorization: `token ${config.github.token}` }
+        });
+        if (res2.ok) {
+          const data = await res2.json();
+          const files = data
+            .filter((item: any) => item.type === 'file' && item.name.toLowerCase().endsWith('.md'))
+            .map((item: any) => ({ name: item.name, path: item.path }));
+          setGithubFiles(files);
+        }
+      }
+    } catch (err) {
+      console.error('Fetch files failed', err);
     } finally {
       setIsFetchingGithub(false);
     }
@@ -970,23 +1036,23 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="max-w-6xl mx-auto"
             >
-              <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
+              <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 mb-12">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
                     {currentFolderId && (
                       <button 
                         onClick={() => {
                           const parent = bookmarks.find(b => b.id === currentFolderId)?.parentId;
                           setCurrentFolderId(parent || null);
                         }}
-                        className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 transition-colors"
+                        className="w-10 h-10 flex items-center justify-center hover:bg-white hover:shadow-sm rounded-2xl text-slate-400 transition-all border border-transparent hover:border-slate-100"
                       >
                         <ChevronLeft size={20} />
                       </button>
                     )}
                     <h1 
                       className={cn(
-                        "text-4xl font-bold tracking-tight",
+                        "text-4xl md:text-5xl font-black tracking-tight text-slate-900",
                         currentFolderId ? "cursor-pointer hover:text-indigo-600 transition-colors" : ""
                       )}
                       onClick={() => currentFolderId && setCurrentFolderId(null)}
@@ -994,9 +1060,10 @@ export default function App() {
                       {currentFolderId ? bookmarks.find(b => b.id === currentFolderId)?.title : '我的收藏'}
                     </h1>
                   </div>
-                  <p className="text-slate-500">数据将以 Markdown 格式存储，透明且安全。</p>
+                  <p className="text-slate-500 font-medium max-w-md">数据将以 Markdown 格式存储，透明且安全。您的数字资产，由您掌控。</p>
                 </div>
-                <div className="flex gap-3">
+                
+                <div className="flex flex-wrap items-center gap-3">
                   <input 
                     type="file" 
                     id="html-import" 
@@ -1006,67 +1073,63 @@ export default function App() {
                   />
                   <button 
                     onClick={() => document.getElementById('html-import')?.click()}
-                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
-                    title="导入 HTML"
+                    className="flex items-center gap-2 px-5 py-3 bg-white border border-slate-100 text-slate-600 font-medium rounded-2xl hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                   >
-                    <Upload size={18} />
-                    <span className="hidden sm:inline">导入</span>
+                    <Upload size={20} />
+                    <span>导入</span>
                   </button>
                   <button 
                     onClick={downloadMd}
-                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
-                    title="导出 .md"
+                    className="flex items-center gap-2 px-5 py-3 bg-white border border-slate-100 text-slate-600 font-medium rounded-2xl hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                   >
-                    <Download size={18} />
-                    <span className="hidden sm:inline">导出</span>
+                    <Download size={20} />
+                    <span>导出</span>
                   </button>
                   <button 
                     onClick={() => {
                       setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
-                    className="btn-secondary flex items-center gap-2 px-3 sm:px-4"
-                    title="新建文件夹"
+                    className="flex items-center gap-2 px-5 py-3 bg-white border border-slate-100 text-slate-600 font-medium rounded-2xl hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                   >
                     <Folder size={20} />
-                    <span className="hidden sm:inline">文件夹</span>
+                    <span>文件夹</span>
                   </button>
                   <button 
                     onClick={() => {
                       setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', parentId: currentFolderId || undefined });
                       setIsAddModalOpen(true);
                     }}
-                    className="btn-primary flex items-center gap-2 px-3 sm:px-4"
-                    title="新建书签"
+                    className="flex items-center gap-2 px-7 py-3 bg-indigo-600 text-white font-medium rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95"
                   >
                     <Plus size={20} />
-                    <span className="hidden sm:inline">新建</span>
+                    <span>新建</span>
                   </button>
                 </div>
               </header>
 
               {/* Search and Filter */}
-              <div className="flex flex-col md:flex-row gap-4 mb-8">
-                <div className="relative flex-1">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-10">
+                <div className="lg:col-span-5 relative group">
+                  <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
                   <input 
                     type="text" 
-                    placeholder="搜索书签或 URL..." 
-                    className="input-field pl-12"
+                    placeholder="搜索书签、URL 或描述..." 
+                    className="w-full h-14 pl-14 pr-6 bg-white border border-slate-200 rounded-[1.25rem] outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all shadow-sm"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
                 </div>
-                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                <div className="lg:col-span-7 flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
                   {categories.map(cat => (
                     <button
                       key={cat}
                       onClick={() => setSelectedCategory(cat)}
                       className={cn(
-                        "px-5 py-2.5 rounded-2xl text-sm font-semibold transition-all whitespace-nowrap",
+                        "px-6 py-3 rounded-2xl text-sm font-bold transition-all whitespace-nowrap border",
                         selectedCategory === cat 
-                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" 
-                          : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-500/30" 
+                          : "bg-white text-slate-600 hover:bg-slate-50 border-slate-200"
                       )}
                     >
                       {cat}
@@ -1083,12 +1146,13 @@ export default function App() {
                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
                       <Folder size={16} /> 文件夹
                     </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                       {filteredBookmarks.filter(b => b.type === 'folder').map(bookmark => (
                         <BookmarkCard 
                           key={bookmark.id} 
                           bookmark={bookmark} 
                           onDelete={() => handleDeleteBookmark(bookmark.id)}
+                          onEdit={() => handleEditBookmark(bookmark)}
                           onOpenFolder={() => {
                             setCurrentFolderId(bookmark.id);
                             setSearchQuery('');
@@ -1104,12 +1168,13 @@ export default function App() {
                   <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
                     <Globe size={16} /> 书签
                   </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                     {filteredBookmarks.filter(b => b.type === 'link').map(bookmark => (
                       <BookmarkCard 
                         key={bookmark.id} 
                         bookmark={bookmark} 
                         onDelete={() => handleDeleteBookmark(bookmark.id)}
+                        onEdit={() => handleEditBookmark(bookmark)}
                         onOpenFolder={() => {
                           setCurrentFolderId(bookmark.id);
                           setSearchQuery('');
@@ -1117,11 +1182,12 @@ export default function App() {
                       />
                     ))}
                     {filteredBookmarks.length === 0 && (
-                      <div className="col-span-full py-20 text-center glass rounded-[2rem]">
-                        <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-slate-300">
-                          <BookMarked size={32} />
+                      <div className="col-span-full py-32 text-center bg-white/40 backdrop-blur-sm rounded-[3rem] border-2 border-dashed border-slate-200">
+                        <div className="w-24 h-24 bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 flex items-center justify-center mx-auto mb-8 text-indigo-500">
+                          <BookMarked size={48} strokeWidth={1.5} />
                         </div>
-                        <p className="text-slate-400">暂无内容，点击上方按钮添加</p>
+                        <h4 className="text-xl font-bold text-slate-800 mb-2">这里空空如也</h4>
+                        <p className="text-slate-400 max-w-xs mx-auto">暂无内容，点击上方“新建”按钮开始您的收藏之旅</p>
                       </div>
                     )}
                   </div>
@@ -1611,10 +1677,16 @@ export default function App() {
                               <select 
                                 className="input-field"
                                 value={config.github?.branch || 'main'}
-                                onChange={(e) => setConfig({
-                                  ...config,
-                                  github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch: e.target.value }
-                                })}
+                                onChange={(e) => {
+                                  const branch = e.target.value;
+                                  setConfig({
+                                    ...config,
+                                    github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch }
+                                  });
+                                  if (config.github?.repo) {
+                                    fetchGithubFiles(config.github.repo, branch);
+                                  }
+                                }}
                               >
                                 {githubBranches.map(b => (
                                   <option key={b.name} value={b.name}>{b.name}</option>
@@ -1636,16 +1708,66 @@ export default function App() {
                         </div>
                         <div className="space-y-2">
                           <label className="text-sm font-medium text-slate-600">存储路径 (.md)</label>
-                          <input 
-                            type="text" 
-                            className="input-field" 
-                            placeholder="zenspace.md"
-                            value={config.github?.path || 'zenspace.md'}
-                            onChange={(e) => setConfig({
-                              ...config,
-                              github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
-                            })}
-                          />
+                          <div className="flex gap-2">
+                            <div className="flex-1 relative">
+                              {githubFiles.length > 0 ? (
+                                <select 
+                                  className="input-field appearance-none"
+                                  value={config.github?.path || 'zenspace.md'}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      setConfig({
+                                        ...config,
+                                        github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <option value="">选择已有文件</option>
+                                  {githubFiles.map(f => (
+                                    <option key={f.path} value={f.path}>{f.name}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input 
+                                  type="text" 
+                                  className="input-field" 
+                                  placeholder="zenspace.md"
+                                  value={config.github?.path || 'zenspace.md'}
+                                  onChange={(e) => setConfig({
+                                    ...config,
+                                    github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                                  })}
+                                />
+                              )}
+                              {githubFiles.length > 0 && (
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                                  <ChevronDown size={16} />
+                                </div>
+                              )}
+                            </div>
+                            {githubFiles.length > 0 && (
+                              <button 
+                                onClick={() => {
+                                  const newPath = prompt('请输入新的存储路径 (例如: data/my-sync.md):');
+                                  if (newPath) {
+                                    const formattedPath = newPath.endsWith('.md') ? newPath : `${newPath}.md`;
+                                    setConfig({
+                                      ...config,
+                                      github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: formattedPath }
+                                    });
+                                  }
+                                }}
+                                className="btn-secondary px-3 py-2"
+                                title="输入新路径"
+                              >
+                                <PlusCircle size={18} />
+                              </button>
+                            )}
+                          </div>
+                          {githubFiles.length > 0 && config.github?.path && (
+                            <p className="text-[10px] text-slate-400 mt-1">当前选择: <span className="text-indigo-600 font-mono">{config.github.path}</span></p>
+                          )}
                         </div>
                         <div className="space-y-3 pt-2">
                           <label className="text-sm font-medium text-slate-600 block">同步内容</label>
@@ -1684,16 +1806,18 @@ export default function App() {
                         <div className="flex gap-3 pt-2">
                           <button 
                             onClick={handleSync}
-                            className="flex-1 btn-primary flex items-center justify-center gap-2"
+                            disabled={isFetchingFiles}
+                            className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <Save size={18} />
+                            {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                             同步到 GitHub
                           </button>
                           <button 
                             onClick={handlePull}
-                            className="flex-1 btn-secondary flex items-center justify-center gap-2"
+                            disabled={isFetchingFiles}
+                            className="flex-1 btn-secondary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <Download size={18} />
+                            {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
                             从 GitHub 加载
                           </button>
                         </div>
@@ -1893,7 +2017,11 @@ export default function App() {
               className="relative w-full max-w-lg glass p-8 rounded-[2rem] shadow-2xl"
             >
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold">{newBookmark.type === 'folder' ? '新建文件夹' : '添加新书签'}</h2>
+                <h2 className="text-2xl font-bold">
+                  {newBookmark.id 
+                    ? (newBookmark.type === 'folder' ? '编辑文件夹' : '编辑书签') 
+                    : (newBookmark.type === 'folder' ? '新建文件夹' : '添加新书签')}
+                </h2>
                 {newBookmark.type === 'link' && activeAIModel && (
                   <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold">
                     <Bot size={12} />
@@ -1988,7 +2116,9 @@ export default function App() {
                   disabled={isAnalyzing || (newBookmark.type === 'folder' && !newBookmark.title?.trim()) || (newBookmark.type === 'link' && !newBookmark.url?.trim())}
                   className="w-full btn-primary py-4 disabled:opacity-50"
                 >
-                  {newBookmark.type === 'folder' ? '创建文件夹' : '保存书签'}
+                  {newBookmark.id 
+                    ? '保存修改' 
+                    : (newBookmark.type === 'folder' ? '创建文件夹' : '保存书签')}
                 </button>
               </div>
             </motion.div>
@@ -2098,7 +2228,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   );
 }
 
-function BookmarkCard({ bookmark, onDelete, onOpenFolder }: { bookmark: Bookmark; onDelete: () => void; onOpenFolder: () => void }) {
+function BookmarkCard({ bookmark, onDelete, onEdit, onOpenFolder }: { bookmark: Bookmark; onDelete: () => void; onEdit: () => void; onOpenFolder: () => void }) {
   const isFolder = bookmark.type === 'folder';
   const [iconError, setIconError] = React.useState(false);
 
@@ -2115,64 +2245,92 @@ function BookmarkCard({ bookmark, onDelete, onOpenFolder }: { bookmark: Bookmark
   
   return (
     <motion.div 
-      layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+      layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ y: -8 }}
       onClick={isFolder ? onOpenFolder : undefined}
       className={cn(
-        "group glass p-4 sm:p-6 rounded-3xl hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative border border-slate-100",
-        isFolder ? "cursor-pointer bg-gradient-to-br from-indigo-50/50 to-white border-indigo-100/50" : ""
+        "group relative bg-white rounded-[2rem] p-6 transition-all duration-500 border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10",
+        isFolder ? "cursor-pointer bg-gradient-to-br from-indigo-50/30 to-white" : ""
       )}
     >
-      <button 
-        onClick={(e) => { e.stopPropagation(); onDelete(); }} 
-        className="absolute top-4 right-4 p-2 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-all"
-      >
-        <Trash2 size={16} />
-      </button>
-      <div className="flex items-start gap-4 mb-4">
-        <div className={cn(
-          "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors overflow-hidden",
-          isFolder ? "bg-indigo-100 text-indigo-600" : "bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
-        )}>
-          {isFolder ? (
-            <Folder size={24} />
-          ) : (
-            favicon && !iconError ? (
-              <img 
-                src={favicon} 
-                alt="" 
-                className="w-full h-full object-cover"
-                onError={() => setIconError(true)}
-                referrerPolicy="no-referrer"
-              />
+      <div className="absolute top-4 right-4 flex flex-col gap-1 z-10">
+        <button 
+          onClick={(e) => { e.stopPropagation(); onEdit(); }} 
+          className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all duration-300"
+        >
+          <Edit3 size={16} />
+        </button>
+        <button 
+          onClick={(e) => { e.stopPropagation(); onDelete(); }} 
+          className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all duration-300"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+
+      <div className="flex flex-col h-full">
+        <div className="flex items-start gap-4 mb-5">
+          <div className={cn(
+            "w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-inner",
+            isFolder ? "bg-indigo-50 text-indigo-600" : "bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+          )}>
+            {isFolder ? (
+              <Folder size={28} strokeWidth={1.5} />
             ) : (
-              <Globe size={24} />
-            )
+              favicon && !iconError ? (
+                <img 
+                  src={favicon} 
+                  alt="" 
+                  className="w-full h-full object-cover rounded-2xl"
+                  onError={() => setIconError(true)}
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <Globe size={28} />
+              )
+            )}
+          </div>
+          <div className="flex-1 min-w-0 pt-1 pr-8">
+            <h3 className="font-bold text-lg leading-tight text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">
+              {bookmark.title}
+            </h3>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className={cn(
+                "text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider",
+                isFolder ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500"
+              )}>
+                {bookmark.category}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-sm text-slate-500 line-clamp-2 mb-6 flex-1 leading-relaxed">
+          {bookmark.description || '暂无描述'}
+        </p>
+
+        <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <BookMarked size={12} />
+            <span className="text-[10px] font-medium font-mono">{new Date(bookmark.createdAt).toLocaleDateString()}</span>
+          </div>
+          
+          {!isFolder ? (
+            <a 
+              href={bookmark.url} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-slate-50 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+            >
+              访问 <ExternalLink size={12} />
+            </a>
+          ) : (
+            <div className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-all">
+              打开 <ChevronRight size={12} />
+            </div>
           )}
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-lg truncate text-slate-800 group-hover:text-indigo-600 transition-colors">{bookmark.title}</h3>
-          <span className="text-[10px] font-bold px-2 py-1 bg-slate-100 text-slate-500 rounded-lg uppercase tracking-wider">{bookmark.category}</span>
-        </div>
-      </div>
-      <p className="text-sm text-slate-500 line-clamp-2 mb-4 h-10 leading-relaxed">{bookmark.description}</p>
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] text-slate-400 font-mono">{new Date(bookmark.createdAt).toLocaleDateString()}</span>
-        {!isFolder && (
-          <a 
-            href={bookmark.url} 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            onClick={(e) => e.stopPropagation()}
-            className="text-sm font-bold text-indigo-600 flex items-center gap-1 hover:gap-2 transition-all"
-          >
-            访问 <ExternalLink size={14} />
-          </a>
-        )}
-        {isFolder && (
-          <span className="text-xs font-bold text-indigo-600 flex items-center gap-1">
-            打开 <ChevronRight size={14} />
-          </span>
-        )}
       </div>
     </motion.div>
   );
