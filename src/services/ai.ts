@@ -191,8 +191,8 @@ ${context}`,
         functionCalls: response.functionCalls?.map(fc => ({ name: fc.name, args: fc.args }))
       };
     } catch (error) {
-      console.error("Gemini Error:", error);
-      return { text: "Gemini API 调用失败，请检查 API Key" };
+      console.error("Gemini Error Detail:", error);
+      return { text: `Gemini API 调用失败: ${error instanceof Error ? error.message : '未知错误'}` };
     }
   }
 };

@@ -1228,7 +1228,7 @@ export default function App() {
                                     }
                                   }}
                                 >
-                                  <option value="">默认 ({config.github?.repo})</option>
+                                  <option value="">选择仓库</option>
                                   {githubRepos.map(r => <option key={r.full_name} value={r.full_name}>{r.full_name}</option>)}
                                 </select>
                                 <select 
