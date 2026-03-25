@@ -18,6 +18,13 @@ export interface AIModelConfig {
   model?: string;
 }
 
+export interface AIPermissions {
+  profile: boolean;
+  files: boolean;
+  bookmarks: boolean;
+  listRepos: boolean;
+}
+
 export interface StorageConfig {
   type: 'local' | 'github';
   github?: {
@@ -32,6 +39,7 @@ export interface StorageConfig {
   };
   aiModels: AIModelConfig[];
   activeAIId?: string;
+  aiPermissions?: AIPermissions;
 }
 
 export interface FileNode {
@@ -49,15 +57,31 @@ export interface UserProfile {
   name: string;
   bio: string;
   avatar?: string;
-  links: { label: string; url: string; icon: string }[];
+  links: { name: string; url: string; icon: string }[];
   content: string; // Markdown body
   files?: FileNode[];
+}
+
+export interface ChatMessage {
+  role: 'user' | 'ai';
+  content: string;
+  timestamp: number;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface AppData {
   bookmarks: Bookmark[];
   profile: Omit<UserProfile, 'content'>;
   content: string;
+  chatSessions?: ChatSession[];
+  activeChatId?: string;
 }
 
 export type TabType = 'bookmarks' | 'profile' | 'settings' | 'ai';

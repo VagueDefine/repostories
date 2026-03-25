@@ -1,5 +1,5 @@
 import { GoogleGenAI, FunctionDeclaration, Type } from "@google/genai";
-import { AIModelConfig, Bookmark } from "../types";
+import { AIModelConfig, Bookmark, AIPermissions } from "../types";
 
 const bookmarkTools: FunctionDeclaration[] = [
   {
@@ -49,6 +49,94 @@ const bookmarkTools: FunctionDeclaration[] = [
       },
       required: ["bookmarkIds"]
     }
+  },
+  {
+    name: "updateProfile",
+    description: "更新用户的个人资料信息（如姓名、简介）",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: "用户的姓名" },
+        bio: { type: Type.STRING, description: "用户的个人简介" }
+      }
+    }
+  },
+  {
+    name: "listGithubFiles",
+    description: "列出 GitHub 仓库中的文件和目录",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        path: { type: Type.STRING, description: "要列出的目录路径（可选，默认为根目录）" },
+        isNotebook: { type: Type.BOOLEAN, description: "是否访问笔记仓库（默认为 false，即访问主数据仓库）" },
+        repo: { type: Type.STRING, description: "GitHub 仓库名称（格式：用户名/仓库名，可选）" },
+        branch: { type: Type.STRING, description: "分支名称（可选）" }
+      }
+    }
+  },
+  {
+    name: "readGithubFile",
+    description: "读取 GitHub 仓库中特定文件的内容",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        path: { type: Type.STRING, description: "文件的完整路径" },
+        isNotebook: { type: Type.BOOLEAN, description: "是否访问笔记仓库" },
+        repo: { type: Type.STRING, description: "GitHub 仓库名称（格式：用户名/仓库名，可选）" },
+        branch: { type: Type.STRING, description: "分支名称（可选）" }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "writeGithubFile",
+    description: "在 GitHub 仓库中创建或更新文件内容",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        path: { type: Type.STRING, description: "文件的完整路径" },
+        content: { type: Type.STRING, description: "文件的内容" },
+        message: { type: Type.STRING, description: "提交信息（可选）" },
+        isNotebook: { type: Type.BOOLEAN, description: "是否访问笔记仓库" },
+        repo: { type: Type.STRING, description: "GitHub 仓库名称（格式：用户名/仓库名，可选）" },
+        branch: { type: Type.STRING, description: "分支名称（可选）" }
+      },
+      required: ["path", "content"]
+    }
+  },
+  {
+    name: "deleteGithubFile",
+    description: "删除 GitHub 仓库中的文件",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        path: { type: Type.STRING, description: "文件的完整路径" },
+        message: { type: Type.STRING, description: "提交信息（可选）" },
+        isNotebook: { type: Type.BOOLEAN, description: "是否访问笔记仓库" },
+        repo: { type: Type.STRING, description: "GitHub 仓库名称（格式：用户名/仓库名，可选）" },
+        branch: { type: Type.STRING, description: "分支名称（可选）" }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "listGithubRepos",
+    description: "列出用户在 GitHub 上的所有仓库",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {}
+    }
+  },
+  {
+    name: "listGithubBranches",
+    description: "列出 GitHub 仓库中的所有分支",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        repo: { type: Type.STRING, description: "GitHub 仓库名称（格式：用户名/仓库名）" }
+      },
+      required: ["repo"]
+    }
   }
 ];
 
@@ -57,17 +145,72 @@ export interface AIResponse {
   functionCalls?: { name: string, args: any }[];
 }
 
-export const chatWithAI = async (config: AIModelConfig, message: string, context: string, history: { role: 'user' | 'ai', content: string }[] = []): Promise<AIResponse> => {
+export const chatWithAI = async (
+  config: AIModelConfig, 
+  message: string, 
+  context: string, 
+  history: { role: 'user' | 'ai', content: string }[] = [],
+  permissions?: AIPermissions
+): Promise<AIResponse> => {
   const { apiKey, apiUrl, model = "gemini-3-flash-preview" } = config;
+
+  const systemInstruction = `你是一个名为 你的AI助手 的智能助手。
+  
+  当前权限状态：
+  - 个人资料访问：${permissions?.profile !== false ? '✅ 已开启' : '❌ 已关闭'}
+  - 收藏夹管理：${permissions?.bookmarks !== false ? '✅ 已开启' : '❌ 已关闭'}
+  - 笔记文件访问：${permissions?.files !== false ? '✅ 已开启' : '❌ 已关闭'}
+
+  重要规则：
+  1. **尊重权限**：如果某项权限已关闭，你将无法看到相关数据（上下文会显示 [权限受限]），你也**绝对不能**尝试调用相关的工具。如果用户要求你做你没有权限的事情，请礼貌地解释你需要相关权限。
+  2. **回答与执行并重**：如果用户要求总结知识并执行操作，你必须同时在文本中给出总结回答，并调用相应的工具执行操作。
+  3. **精准识别**：在寻找特定主题的书签时，请务必检查书签的标题和 URL。
+  4. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。
+  5. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。
+  6. **使用真实 ID**：在调用工具时，请确保使用书签或文件夹的真实 ID。
+
+  上下文信息：
+  ${context}`;
+
+  // Filter tools based on permissions
+  const availableTools = bookmarkTools.filter(tool => {
+    if (['createFolder', 'moveBookmarks', 'updateBookmarksCategory', 'deleteBookmarks'].includes(tool.name)) {
+      return permissions?.bookmarks !== false;
+    }
+    if (tool.name === 'updateProfile') {
+      return permissions?.profile !== false;
+    }
+    if (['listGithubFiles', 'readGithubFile', 'writeGithubFile', 'deleteGithubFile'].includes(tool.name)) {
+      return permissions?.files !== false;
+    }
+    if (tool.name === 'listGithubRepos' || tool.name === 'listGithubBranches') {
+      return permissions?.listRepos !== false;
+    }
+    return true;
+  });
 
   // Mock mode for testing without real API
   if (apiKey === 'demo' || apiKey === 'test') {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
     if (message.toLowerCase().includes('分类') || message.toLowerCase().includes('整理')) {
+      if (permissions?.bookmarks === false) {
+        return { text: "抱歉，我目前没有管理收藏夹的权限，无法为你整理书签。" };
+      }
       return {
         text: "好的，我已经根据你的要求为你整理了书签。在演示模式下，我模拟执行了分类操作。",
         functionCalls: [
           { name: "updateBookmarksCategory", args: { bookmarkIds: ["1"], category: "AI 推荐" } }
+        ]
+      };
+    }
+    if (message.toLowerCase().includes('修改姓名') || message.toLowerCase().includes('修改个人信息')) {
+      if (permissions?.profile === false) {
+        return { text: "抱歉，我目前没有修改个人资料的权限。" };
+      }
+      return {
+        text: "好的，我已经帮你修改了个人资料。",
+        functionCalls: [
+          { name: "updateProfile", args: { name: "新名字" } }
         ]
       };
     }
@@ -105,22 +248,11 @@ export const chatWithAI = async (config: AIModelConfig, message: string, context
           body: {
             model: model || "gpt-3.5-turbo",
             messages: [
-              { role: "system", content: `你是一个名为 你的AI助手 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
-
-重要规则：
-1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
-2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。
-3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。
-4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。
-5. **目标文件夹识别**：当用户提到某个文件夹（如“电源文件夹”）时，请在上下文的收藏夹内容中查找该文件夹的 ID。如果找不到，请先使用 createFolder 创建它。
-6. **使用真实 ID**：在调用 moveBookmarks、updateBookmarksCategory、deleteBookmarks 等工具时，请确保 \`bookmarkIds\` 数组中包含的是书签的**真实 ID**，而不是标题。
-
-上下文信息：
-${context}` },
+              { role: "system", content: systemInstruction },
               ...history.map(msg => ({ role: msg.role === 'ai' ? 'assistant' : 'user', content: msg.content })),
               { role: "user", content: message }
             ],
-            tools: bookmarkTools.map(tool => ({
+            tools: availableTools.map(tool => ({
               type: "function",
               function: {
                 name: tool.name,
@@ -154,6 +286,10 @@ ${context}` },
   } else {
     // Default to Gemini
     try {
+      if (!apiKey || apiKey.trim() === "") {
+        throw new Error("API Key 不能为空。请在设置中配置有效的 Gemini API Key。");
+      }
+      
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: model || "gemini-3-flash-preview",
@@ -170,19 +306,8 @@ ${context}` },
           }
         ],
         config: {
-          systemInstruction: `你是一个名为 你的AI助手 的智能助手。你拥有访问用户收藏夹、个人简介和笔记的权限。你可以通过调用工具来帮助用户管理书签（如创建文件夹、移动书签、修改分类等）。
-
-重要规则：
-1. **回答与执行并重**：如果用户要求总结知识并执行操作（如“总结一下并在收藏夹中新建文件夹移动进去”），你必须**同时**在文本中给出总结回答，**并**调用相应的工具执行操作。
-2. **精准识别**：在寻找特定主题的书签时，请务必检查书签的 **标题 (Title)** 和 **URL**。
-3. **多任务协同**：如果用户要求执行多个操作，请在一次回复中调用所有必要的工具。
-4. **ID 协同**：创建新文件夹并立即移动书签时，请在 createFolder 中指定自定义 ID，并在 moveBookmarks 中使用该 ID。
-5. **目标文件夹识别**：当用户提到某个文件夹（如“电源文件夹”）时，请在上下文的收藏夹内容中查找该文件夹的 ID。如果找不到，请先使用 createFolder 创建它。
-6. **使用真实 ID**：在调用 moveBookmarks、updateBookmarksCategory、deleteBookmarks 等工具时，请确保 \`bookmarkIds\` 数组中包含的是书签的**真实 ID**，而不是标题。
-
-上下文信息：
-${context}`,
-          tools: [{ functionDeclarations: bookmarkTools }]
+          systemInstruction: systemInstruction,
+          tools: availableTools.length > 0 ? [{ functionDeclarations: availableTools }] : []
         }
       });
       
@@ -192,7 +317,21 @@ ${context}`,
       };
     } catch (error) {
       console.error("Gemini Error Detail:", error);
-      return { text: `Gemini API 调用失败: ${error instanceof Error ? error.message : '未知错误'}` };
+      let errorMessage = "Gemini API 调用失败";
+      
+      if (error instanceof Error) {
+        if (error.message.includes("xhr error") || error.message.includes("Rpc failed")) {
+          errorMessage = "网络连接失败 (XHR Error)。这通常是由于网络环境限制、API Key 无效或浏览器插件拦截导致的。请检查您的网络连接，或尝试更换 API Key。";
+        } else if (error.message.includes("API key not valid")) {
+          errorMessage = "无效的 API Key。请检查您的 Gemini API Key 是否正确。";
+        } else if (error.message.includes("model not found")) {
+          errorMessage = `找不到模型 "${model}"。请确保您的 API Key 有权访问此模型。`;
+        } else {
+          errorMessage = `Gemini API 错误: ${error.message}`;
+        }
+      }
+      
+      return { text: errorMessage };
     }
   }
 };

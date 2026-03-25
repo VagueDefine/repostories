@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Plus, Globe, Folder, Settings, User, 
@@ -8,12 +8,14 @@ import {
   Send, Bot, Key, Link as LinkIcon, Edit3,
   ChevronLeft, Wand2, PlusCircle, MoreVertical, BookMarked, Upload,
   Copy, Check, File, Image, ChevronDown, FolderPlus, FilePlus, RotateCw,
-  Loader2, RefreshCw
+  Loader2, RefreshCw, History, Trash, MessageSquare, HelpCircle, PlusSquare,
+  ArrowUpRight, ArrowDownCircle
 } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import Markdown from 'react-markdown';
-import { Bookmark, TabType, UserProfile, StorageConfig, AppData, AIModelConfig, FileNode } from './types';
+import { Bookmark, TabType, UserProfile, StorageConfig, AppData, AIModelConfig, FileNode, ChatMessage, ChatSession } from './types';
 import * as storage from './services/storage';
 import { chatWithAI, analyzeUrl } from './services/ai';
 import { parseBookmarkHtml } from './services/bookmarkParser';
@@ -137,12 +139,27 @@ const FileTreeNode = ({
   );
 };
 
+const renderIcon = (iconName: string, size: number = 16) => {
+  if (iconName.startsWith('data:image/')) {
+    return <img src={iconName} alt="icon" style={{ width: size, height: size, objectFit: 'contain' }} referrerPolicy="no-referrer" />;
+  }
+  // Normalize icon name: capitalize first letter and handle common cases
+  const normalizedName = iconName.charAt(0).toUpperCase() + iconName.slice(1);
+  const IconComponent = (LucideIcons as any)[normalizedName] || (LucideIcons as any)[iconName] || LucideIcons.Link;
+  return <IconComponent size={size} />;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('bookmarks');
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [profile, setProfile] = useState<Omit<UserProfile, 'content'>>(storage.defaultProfile);
   const [markdownContent, setMarkdownContent] = useState(storage.defaultProfile.content);
-  const [config, setConfig] = useState<StorageConfig>({ type: 'local', aiModels: [] });
+  const [config, setConfig] = useState<StorageConfig>({ 
+    type: 'local', 
+    aiModels: [],
+    aiPermissions: { profile: true, files: true, bookmarks: true, listRepos: true }
+  });
+  const [activeSettingsSection, setActiveSettingsSection] = useState<string | null>('sync');
   
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
@@ -150,19 +167,60 @@ export default function App() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   
   // AI State
-  const [messages, setMessages] = useState<{ role: 'user' | 'ai', content: string }[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const [aiInput, setAiInput] = useState('');
   const [isAILoading, setIsAILoading] = useState(false);
   const [showAIModelModal, setShowAIModelModal] = useState(false);
   const [editingAIModel, setEditingAIModel] = useState<AIModelConfig | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = useState('');
+  const [isAIModelsExpanded, setIsAIModelsExpanded] = useState(false);
+  const [isTestingAI, setIsTestingAI] = useState(false);
   const iconInputRef = React.useRef<HTMLInputElement>(null);
   const [analysisError, setAnalysisError] = useState<React.ReactNode | null>(null);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
 
+  const activeChat = useMemo(() => {
+    return chatSessions.find(s => s.id === activeChatId) || null;
+  }, [chatSessions, activeChatId]);
+
+  const messages = activeChat?.messages || [];
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior
+      });
+      setShowScrollButton(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAILoading) {
+      scrollToBottom();
+    }
+  }, [isAILoading]);
+
+  useEffect(() => {
+    if (chatContainerRef.current && messages.length > 0) {
+      const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      if (isNearBottom) {
+        scrollToBottom();
+      } else if (messages[messages.length - 1].role === 'ai' && !isAILoading) {
+        setShowScrollButton(true);
+      }
+    }
+  }, [messages, isAILoading]);
+
   // GitHub Fetching State
-  const [githubRepos, setGithubRepos] = useState<{ full_name: string }[]>([]);
+  const [githubRepos, setGithubRepos] = useState<{ full_name: string; default_branch?: string }[]>([]);
   const [githubBranches, setGithubBranches] = useState<{ name: string }[]>([]);
   const [githubFiles, setGithubFiles] = useState<{ name: string; path: string }[]>([]);
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
@@ -199,10 +257,33 @@ export default function App() {
       setBookmarks(parsed.bookmarks);
       setProfile(parsed.profile);
       setMarkdownContent(parsed.content);
+      if (parsed.chatSessions && parsed.chatSessions.length > 0) {
+        setChatSessions(parsed.chatSessions);
+        setActiveChatId(parsed.activeChatId || parsed.chatSessions[0].id);
+      } else {
+        const initialChat: ChatSession = {
+          id: Math.random().toString(36).substr(2, 9),
+          title: '新对话',
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        setChatSessions([initialChat]);
+        setActiveChatId(initialChat.id);
+      }
     } else {
       setBookmarks(storage.defaultBookmarks);
       setProfile(storage.defaultProfile);
       setMarkdownContent(storage.defaultProfile.content);
+      const initialChat: ChatSession = {
+        id: Math.random().toString(36).substr(2, 9),
+        title: '新对话',
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      setChatSessions([initialChat]);
+      setActiveChatId(initialChat.id);
     }
     const loadedConfig = storage.loadConfig();
     setConfig(loadedConfig);
@@ -210,10 +291,16 @@ export default function App() {
 
   // Save to local cache whenever data changes
   useEffect(() => {
-    const data: AppData = { bookmarks, profile, content: markdownContent };
+    const data: AppData = { 
+      bookmarks, 
+      profile, 
+      content: markdownContent,
+      chatSessions,
+      activeChatId: activeChatId || undefined
+    };
     // 本地缓存始终保存全量数据，不受 GitHub 同步勾选影响，确保本地数据安全
-    localStorage.setItem('zenspace_md_cache', storage.stringifyToMd(data));
-  }, [bookmarks, profile, markdownContent]);
+    localStorage.setItem('zenspace_md_cache', storage.stringifyToMd(data, config));
+  }, [bookmarks, profile, markdownContent, chatSessions, activeChatId, config]);
 
   useEffect(() => {
     storage.saveConfig(config);
@@ -385,13 +472,21 @@ export default function App() {
   const handleSaveAIModel = () => {
     if (!editingAIModel) return;
     
+    // Trim API Key and URL
+    const cleanedModel = {
+      ...editingAIModel,
+      apiKey: editingAIModel.apiKey.trim(),
+      apiUrl: editingAIModel.apiUrl?.trim(),
+      model: editingAIModel.model?.trim()
+    };
+    
     let newModels = [...config.aiModels];
-    const index = newModels.findIndex(m => m.id === editingAIModel.id);
+    const index = newModels.findIndex(m => m.id === cleanedModel.id);
     
     if (index >= 0) {
-      newModels[index] = editingAIModel;
+      newModels[index] = cleanedModel;
     } else {
-      newModels.push({ ...editingAIModel, id: Math.random().toString(36).substr(2, 9) });
+      newModels.push({ ...cleanedModel, id: Math.random().toString(36).substr(2, 9) });
     }
     
     const newConfig = { 
@@ -403,6 +498,41 @@ export default function App() {
     setShowAIModelModal(false);
     setEditingAIModel(null);
     addToast('AI 模型配置已保存', 'success');
+  };
+
+  const handleTestAIModel = async () => {
+    if (!editingAIModel?.apiKey) {
+      addToast('请输入 API Key 进行测试', 'error');
+      return;
+    }
+    
+    setIsTestingAI(true);
+    try {
+      const testModel = { 
+        ...editingAIModel, 
+        apiKey: editingAIModel.apiKey.trim(),
+        apiUrl: editingAIModel.apiUrl?.trim(),
+        model: editingAIModel.model?.trim()
+      };
+      
+      const result = await chatWithAI(
+        testModel, 
+        "你好，请回复 'OK' 以确认连接正常。", 
+        "连接测试", 
+        [], 
+        { profile: false, bookmarks: false, files: false, listRepos: false }
+      );
+      
+      if (result.text.includes("失败") || result.text.includes("错误") || result.text.includes("XHR Error")) {
+        addToast(result.text, 'error');
+      } else {
+        addToast('连接测试成功！AI 已响应。', 'success');
+      }
+    } catch (error) {
+      addToast(`测试失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+    } finally {
+      setIsTestingAI(false);
+    }
   };
 
   const fetchGithubRepos = async () => {
@@ -771,129 +901,329 @@ export default function App() {
   };
 
   const handleSendMessage = async () => {
-    if (!aiInput.trim()) return;
+    if (!aiInput.trim() || isAILoading) return;
     
     if (!activeAIModel?.apiKey) {
-      setMessages(prev => [...prev, 
-        { role: 'user', content: aiInput.trim() },
-        { role: 'ai', content: '未配置 AI 模型或 API Key。请前往“AI 助手”选项卡进行设置，或者输入 "demo" 作为 API Key 来开启演示模式。' }
-      ]);
+      const errorMsg: ChatMessage = { role: 'ai', content: '未配置 AI 模型或 API Key。请前往“AI 助手”选项卡进行设置，或者输入 "demo" 作为 API Key 来开启演示模式。', timestamp: Date.now() };
+      updateActiveChatMessages([{ role: 'user', content: aiInput.trim(), timestamp: Date.now() }, errorMsg]);
       setAiInput('');
       return;
     }
 
     const userMsg = aiInput.trim();
     setAiInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    const userMessage: ChatMessage = { role: 'user', content: userMsg, timestamp: Date.now() };
+    updateActiveChatMessages([userMessage]);
     setIsAILoading(true);
 
     const context = `
-      用户信息:
+      ${config.aiPermissions?.profile !== false ? `用户信息:
       姓名: ${profile.name}
-      简介: ${profile.bio}
+      简介: ${profile.bio}` : '用户信息: [权限受限，无法查看]'}
       
-      收藏夹内容 (共 ${bookmarks.length} 条):
-      ${bookmarks.map(b => `- [${b.type === 'folder' ? '文件夹' : '链接'}] ${b.title} (ID: ${b.id}, URL: ${b.url}, 分类: ${b.category}, 父文件夹ID: ${b.parentId || 'root'})`).join('\n')}
+      ${config.aiPermissions?.bookmarks !== false ? `收藏夹内容 (共 ${bookmarks.length} 条):
+      ${bookmarks.map(b => `- [${b.type === 'folder' ? '文件夹' : '链接'}] ${b.title} (ID: ${b.id}, URL: ${b.url}, 分类: ${b.category}, 父文件夹ID: ${b.parentId || 'root'})`).join('\n')}` : '收藏夹内容: [权限受限，无法查看]'}
       
-      个人主页笔记内容:
+      ${config.aiPermissions?.files !== false ? `个人主页笔记内容:
       ${markdownContent}
+      
+      GitHub 配置:
+      ${config.type === 'github' && config.github ? `
+      主仓库: ${config.github.repo} (分支: ${config.github.branch || 'main'})
+      笔记仓库: ${config.github.notebookRepo || config.github.repo} (分支: ${config.github.notebookBranch || config.github.branch || 'main'})
+      ` : '未配置 GitHub 存储'}` : '个人主页笔记内容: [权限受限，无法查看]'}
     `;
 
-    const response = await chatWithAI(activeAIModel, userMsg, context, messages);
+    const response = await chatWithAI(activeAIModel, userMsg, context, messages, config.aiPermissions);
     
     let finalContent = response.text;
     if (response.functionCalls && response.functionCalls.length > 0) {
-      executeAIFunctionCalls(response.functionCalls);
-      
+      // Filter function calls based on permissions
+      const allowedCalls = response.functionCalls.filter(call => {
+        if (['createFolder', 'moveBookmarks', 'updateBookmarksCategory', 'deleteBookmarks'].includes(call.name)) {
+          return config.aiPermissions?.bookmarks !== false;
+        }
+        if (call.name === 'updateProfile') {
+          return config.aiPermissions?.profile !== false;
+        }
+        if (['listGithubFiles', 'readGithubFile', 'writeGithubFile', 'deleteGithubFile'].includes(call.name)) {
+          return config.aiPermissions?.files !== false;
+        }
+        return true;
+      });
+
+      let results: { name: string, result: any, display: string }[] = [];
+      if (allowedCalls.length > 0) {
+        results = await executeAIFunctionCalls(allowedCalls);
+      }
+
       const actions = response.functionCalls.map(call => {
-        if (call.name === 'createFolder') return `创建文件夹 "${call.args.title}"`;
-        if (call.name === 'moveBookmarks') return `移动了 ${call.args.bookmarkIds?.length || 0} 个书签`;
-        if (call.name === 'updateBookmarksCategory') return `更新了分类为 "${call.args.category}"`;
-        if (call.name === 'deleteBookmarks') return `删除了 ${call.args.bookmarkIds?.length || 0} 个内容`;
-        return '执行了管理操作';
+        const isAllowed = allowedCalls.includes(call);
+        if (!isAllowed) return `❌ (权限被拒绝) 执行了 ${call.name}`;
+        
+        // Find the result for this call
+        const result = results.find(r => r.name === call.name);
+        return result?.display || `✅ 执行了 ${call.name}`;
       }).join('，');
 
-      if (!finalContent) {
-        finalContent = `✅ **操作成功**：${actions}。`;
+      // Call AI again with tool results to get a conversational final response
+      if (results.length > 0) {
+        const toolResultsContext = results.map(r => `工具 [${r.name}] 执行结果: ${JSON.stringify(r.result)}`).join('\n');
+        const followUpHistory: { role: 'user' | 'ai', content: string }[] = [
+          ...messages.map(m => ({ role: m.role as 'user' | 'ai', content: m.content })),
+          { role: 'user', content: userMsg },
+          { role: 'ai', content: response.text || `我正在执行以下操作: ${actions}` }
+        ];
+        
+        const finalResponse = await chatWithAI(
+          activeAIModel, 
+          `工具执行已完成。结果如下：\n${toolResultsContext}\n请根据这些结果给用户一个最终回复。`, 
+          context, 
+          followUpHistory, 
+          config.aiPermissions
+        );
+        
+        finalContent = finalResponse.text;
+        if (!finalContent) {
+          finalContent = `**AI 操作结果**：${actions}。`;
+        } else {
+          finalContent = `${finalContent}\n\n---\n*💡 AI 助手已自动执行：${actions}*`;
+        }
       } else {
-        finalContent = `${finalContent}\n\n---\n*💡 AI 助手已自动执行：${actions}*`;
+        if (!finalContent) {
+          finalContent = `**AI 操作结果**：${actions}。`;
+        } else {
+          finalContent = `${finalContent}\n\n---\n*💡 AI 助手已自动执行：${actions}*`;
+        }
       }
     }
 
-    setMessages(prev => [...prev, { role: 'ai', content: finalContent || "AI 未返回内容" }]);
+    const aiMessage: ChatMessage = { role: 'ai', content: finalContent || "AI 未返回内容", timestamp: Date.now() };
+    updateActiveChatMessages([aiMessage]);
     setIsAILoading(false);
   };
 
-  const executeAIFunctionCalls = (calls: { name: string, args: any }[]) => {
-    setBookmarks(prev => {
-      let newBookmarks = [...prev];
-      let changed = false;
-
-      calls.forEach(call => {
-        switch (call.name) {
-          case 'createFolder':
-            const folder: Bookmark = {
-              id: call.args.id || Math.random().toString(36).substr(2, 9),
-              title: call.args.title,
-              url: '',
-              category: '文件夹',
-              description: 'AI 自动创建',
-              createdAt: Date.now(),
-              type: 'folder',
-              parentId: (call.args.parentId === 'root' || !call.args.parentId) ? undefined : call.args.parentId
-            };
-            newBookmarks.unshift(folder);
-            changed = true;
-            break;
-          case 'moveBookmarks':
-            let targetId = call.args.targetFolderId;
-            if (targetId && targetId !== 'root') {
-              // Check if targetId is actually a title instead of an ID
-              const folderByTitle = newBookmarks.find(b => b.type === 'folder' && b.title === targetId);
-              const folderById = newBookmarks.find(b => b.id === targetId);
-              if (!folderById && folderByTitle) {
-                targetId = folderByTitle.id;
-              } else if (!folderById && !folderByTitle) {
-                // If target folder doesn't exist, create it automatically
-                const newFolderId = Math.random().toString(36).substr(2, 9);
-                newBookmarks.unshift({
-                  id: newFolderId,
-                  title: targetId,
-                  url: '',
-                  category: '文件夹',
-                  description: 'AI 自动创建',
-                  createdAt: Date.now(),
-                  type: 'folder'
-                });
-                targetId = newFolderId;
-              }
-            }
-            newBookmarks = newBookmarks.map(b => {
-              if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
-                return { ...b, parentId: (targetId === 'root' || !targetId) ? undefined : targetId };
-              }
-              return b;
-            });
-            changed = true;
-            break;
-          case 'updateBookmarksCategory':
-            newBookmarks = newBookmarks.map(b => {
-              if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
-                return { ...b, category: call.args.category };
-              }
-              return b;
-            });
-            changed = true;
-            break;
-          case 'deleteBookmarks':
-            newBookmarks = newBookmarks.filter(b => !call.args.bookmarkIds.includes(b.id) && !call.args.bookmarkIds.includes(b.title));
-            changed = true;
-            break;
+  const updateActiveChatMessages = (newMsgs: ChatMessage[]) => {
+    setChatSessions(prev => prev.map(s => {
+      if (s.id === activeChatId) {
+        const updatedMessages = [...s.messages, ...newMsgs];
+        // Auto-title if it's the first message
+        let title = s.title;
+        if (s.title === '新对话' && updatedMessages.length > 0) {
+          title = updatedMessages[0].content.slice(0, 20) + (updatedMessages[0].content.length > 20 ? '...' : '');
         }
-      });
+        return { ...s, messages: updatedMessages, title, updatedAt: Date.now() };
+      }
+      return s;
+    }));
+  };
 
-      return changed ? newBookmarks : prev;
+  const handleNewChat = () => {
+    const newChat: ChatSession = {
+      id: Math.random().toString(36).substr(2, 9),
+      title: '新对话',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    setChatSessions(prev => [newChat, ...prev]);
+    setActiveChatId(newChat.id);
+    setActiveTab('ai');
+  };
+
+  const handleClearChat = (id: string) => {
+    setChatSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      if (filtered.length === 0) {
+        const newChat: ChatSession = {
+          id: Math.random().toString(36).substr(2, 9),
+          title: '新对话',
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        setActiveChatId(newChat.id);
+        return [newChat];
+      }
+      if (activeChatId === id) {
+        setActiveChatId(filtered[0].id);
+      }
+      return filtered;
     });
+  };
+
+  const handleRenameChat = (sessionId: string, newTitle: string) => {
+    if (!newTitle.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+    setChatSessions(prev => prev.map(s => 
+      s.id === sessionId ? { ...s, title: newTitle, updatedAt: Date.now() } : s
+    ));
+    setEditingSessionId(null);
+  };
+
+  const executeAIFunctionCalls = async (calls: { name: string, args: any }[]) => {
+    const results: { name: string, result: any, display: string }[] = [];
+
+    for (const call of calls) {
+      try {
+        if (call.name === 'updateProfile') {
+          setProfile(prev => ({
+            ...prev,
+            name: call.args.name || prev.name,
+            bio: call.args.bio || prev.bio
+          }));
+          results.push({ name: call.name, result: { success: true }, display: `✅ 更新了个人资料` });
+          continue;
+        }
+
+        if (['listGithubFiles', 'readGithubFile', 'writeGithubFile', 'deleteGithubFile', 'listGithubRepos', 'listGithubBranches'].includes(call.name)) {
+          if (config.type !== 'github' || !config.github?.token) {
+            results.push({ name: call.name, result: { error: '未配置 GitHub Token' }, display: `❌ GitHub 操作失败：未配置 GitHub Token` });
+            continue;
+          }
+
+          if (call.name === 'listGithubRepos') {
+            const repos = await storage.listGithubRepos(config);
+            const repoList = repos.map((r: any) => r.full_name).join(', ');
+            results.push({ name: call.name, result: repos, display: `✅ 列出了您的 GitHub 仓库：${repoList}` });
+          } else if (call.name === 'listGithubBranches') {
+            const branches = await storage.listGithubBranches(config, call.args.repo);
+            const branchList = branches.map((b: any) => b.name).join(', ');
+            results.push({ name: call.name, result: branches, display: `✅ 列出了仓库 "${call.args.repo}" 的所有分支：${branchList}` });
+          } else if (call.name === 'listGithubFiles') {
+            const files = await storage.fetchGithubTree(config, call.args.path || '', call.args.isNotebook, call.args.repo, call.args.branch);
+            const fileList = files.map((f: any) => `${f.type === 'dir' ? '📁' : '📄'} ${f.name}`).join(', ');
+            results.push({ name: call.name, result: files, display: `✅ 列出了目录 "${call.args.path || '/'}" 的内容：${fileList}` });
+          } else if (call.name === 'readGithubFile') {
+            const file = await storage.fetchGithubFile(config, call.args.path, call.args.isNotebook, call.args.repo, call.args.branch);
+            if (file) {
+              results.push({ name: call.name, result: file, display: `✅ 读取了文件 "${call.args.path}"，内容长度：${file.content.length} 字符` });
+              // If it's the main zenspace.md, we might want to update the local state
+              if (!call.args.isNotebook && !call.args.repo && call.args.path === (config.github.path || 'zenspace.md')) {
+                const parsed = storage.parseFromMd(file.content);
+                setBookmarks(parsed.bookmarks);
+                setProfile(parsed.profile);
+                setMarkdownContent(parsed.content);
+              }
+            } else {
+              results.push({ name: call.name, result: { error: '文件不存在' }, display: `❌ 读取文件 "${call.args.path}" 失败：文件不存在` });
+            }
+          } else if (call.name === 'writeGithubFile') {
+            const success = await storage.writeGithubFile(config, call.args.path, call.args.content, call.args.message, call.args.isNotebook, call.args.repo, call.args.branch);
+            if (success) {
+              results.push({ name: call.name, result: { success: true }, display: `✅ 已写入文件 "${call.args.path}"` });
+              // Refresh tree if needed
+              if (call.args.isNotebook) {
+                loadProfileFiles('');
+              }
+            } else {
+              results.push({ name: call.name, result: { success: false }, display: `❌ 写入文件 "${call.args.path}" 失败` });
+            }
+          } else if (call.name === 'deleteGithubFile') {
+            const success = await storage.deleteGithubFile(config, call.args.path, call.args.message, call.args.isNotebook, call.args.repo, call.args.branch);
+            if (success) {
+              results.push({ name: call.name, result: { success: true }, display: `✅ 已删除文件 "${call.args.path}"` });
+              if (call.args.isNotebook) {
+                loadProfileFiles('');
+              }
+            } else {
+              results.push({ name: call.name, result: { success: false }, display: `❌ 删除文件 "${call.args.path}" 失败` });
+            }
+          }
+          continue;
+        }
+
+        // Bookmark operations
+        let bookmarkResult: any = null;
+        let bookmarkDisplay = '';
+
+        setBookmarks(prev => {
+          let newBookmarks = [...prev];
+          let changed = false;
+
+          switch (call.name) {
+            case 'createFolder':
+              const folder: Bookmark = {
+                id: call.args.id || Math.random().toString(36).substr(2, 9),
+                title: call.args.title,
+                url: '',
+                category: '文件夹',
+                description: 'AI 自动创建',
+                createdAt: Date.now(),
+                type: 'folder',
+                parentId: (call.args.parentId === 'root' || !call.args.parentId) ? undefined : call.args.parentId
+              };
+              newBookmarks.unshift(folder);
+              changed = true;
+              bookmarkDisplay = `✅ 创建了文件夹 "${call.args.title}"`;
+              bookmarkResult = folder;
+              break;
+            case 'moveBookmarks':
+              let targetId = call.args.targetFolderId;
+              if (targetId && targetId !== 'root') {
+                const folderByTitle = newBookmarks.find(b => b.type === 'folder' && b.title === targetId);
+                const folderById = newBookmarks.find(b => b.id === targetId);
+                if (!folderById && folderByTitle) {
+                  targetId = folderByTitle.id;
+                } else if (!folderById && !folderByTitle) {
+                  const newFolderId = Math.random().toString(36).substr(2, 9);
+                  newBookmarks.unshift({
+                    id: newFolderId,
+                    title: targetId,
+                    url: '',
+                    category: '文件夹',
+                    description: 'AI 自动创建',
+                    createdAt: Date.now(),
+                    type: 'folder'
+                  });
+                  targetId = newFolderId;
+                }
+              }
+              newBookmarks = newBookmarks.map(b => {
+                if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
+                  return { ...b, parentId: (targetId === 'root' || !targetId) ? undefined : targetId };
+                }
+                return b;
+              });
+              changed = true;
+              bookmarkDisplay = `✅ 移动了 ${call.args.bookmarkIds?.length || 0} 个内容`;
+              bookmarkResult = { success: true };
+              break;
+            case 'updateBookmarksCategory':
+              newBookmarks = newBookmarks.map(b => {
+                if (call.args.bookmarkIds.includes(b.id) || call.args.bookmarkIds.includes(b.title)) {
+                  return { ...b, category: call.args.category };
+                }
+                return b;
+              });
+              changed = true;
+              bookmarkDisplay = `✅ 更新了分类为 "${call.args.category}"`;
+              bookmarkResult = { success: true };
+              break;
+            case 'deleteBookmarks':
+              newBookmarks = newBookmarks.filter(b => !call.args.bookmarkIds.includes(b.id) && !call.args.bookmarkIds.includes(b.title));
+              changed = true;
+              bookmarkDisplay = `✅ 删除了 ${call.args.bookmarkIds?.length || 0} 个内容`;
+              bookmarkResult = { success: true };
+              break;
+          }
+          
+          if (changed && config.type === 'github' && config.github?.syncBookmarks) {
+            storage.syncToGithub(config, { bookmarks: newBookmarks, profile, content: markdownContent });
+          }
+          return changed ? newBookmarks : prev;
+        });
+
+        results.push({ name: call.name, result: bookmarkResult, display: bookmarkDisplay });
+
+      } catch (error) {
+        console.error(`AI Function Call Error (${call.name}):`, error);
+        results.push({ name: call.name, result: { error: String(error) }, display: `❌ 执行 "${call.name}" 时出错: ${error instanceof Error ? error.message : '未知错误'}` });
+      }
+    }
+    return results;
   };
 
   useEffect(() => {
@@ -1243,7 +1573,7 @@ export default function App() {
                           <input 
                             type="text" 
                             className="input-field" 
-                            value={profile.name}
+                            value={profile.name || ''}
                             onChange={(e) => setProfile({ ...profile, name: e.target.value })}
                           />
                         </div>
@@ -1254,7 +1584,7 @@ export default function App() {
                               type="text" 
                               className="input-field flex-1" 
                               placeholder="输入头像 URL..."
-                              value={profile.avatar}
+                              value={profile.avatar || ''}
                               onChange={(e) => setProfile({ ...profile, avatar: e.target.value })}
                             />
                             <label className="btn-secondary flex-shrink-0 cursor-pointer flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors">
@@ -1286,31 +1616,102 @@ export default function App() {
                         <input 
                           type="text" 
                           className="input-field" 
-                          value={profile.bio}
+                          value={profile.bio || ''}
                           onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
                         />
                       </div>
 
                       <div className="space-y-4">
-                        <label className="text-sm font-bold text-slate-400 uppercase tracking-widest block">社交链接</label>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">社交链接 (DIY)</label>
+                          <button 
+                            onClick={() => {
+                              const newLinks = [...profile.links, { name: '新链接', url: '', icon: 'Link' }];
+                              setProfile({ ...profile, links: newLinks });
+                            }}
+                            className="text-xs text-indigo-600 font-bold flex items-center gap-1 hover:underline"
+                          >
+                            <Plus size={14} /> 添加链接
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4">
                           {profile.links.map((link, idx) => (
-                            <div key={idx} className="flex gap-2 items-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                              <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-slate-400">
-                                {link.icon === 'github' ? <Github size={16} /> : <Twitter size={16} />}
-                              </div>
-                              <input 
-                                type="text" 
-                                className="flex-1 bg-transparent border-none text-sm outline-none"
-                                value={link.url}
-                                onChange={(e) => {
-                                  const newLinks = [...profile.links];
-                                  newLinks[idx] = { ...newLinks[idx], url: e.target.value };
+                            <div key={idx} className="flex flex-col md:flex-row gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 relative group">
+                              <button 
+                                onClick={() => {
+                                  const newLinks = profile.links.filter((_, i) => i !== idx);
                                   setProfile({ ...profile, links: newLinks });
                                 }}
-                              />
+                                className="absolute -top-2 -right-2 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-lg z-10"
+                              >
+                                <X size={12} />
+                              </button>
+                              
+                              <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">名称</label>
+                                  <input 
+                                    type="text" 
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                    placeholder="例如: GitHub"
+                                    value={link.name || ''}
+                                    onChange={(e) => {
+                                      const newLinks = [...profile.links];
+                                      newLinks[idx] = { ...newLinks[idx], name: e.target.value };
+                                      setProfile({ ...profile, links: newLinks });
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">图标 (Lucide 名称)</label>
+                                  <div className="flex gap-2">
+                                    <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                                      {renderIcon(link.icon)}
+                                    </div>
+                                    <input 
+                                      type="text" 
+                                      className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                      placeholder="例如: Github"
+                                      value={link.icon || ''}
+                                      onChange={(e) => {
+                                        const newLinks = [...profile.links];
+                                        newLinks[idx] = { ...newLinks[idx], icon: e.target.value };
+                                        setProfile({ ...profile, links: newLinks });
+                                      }}
+                                    />
+                                    <a 
+                                      href="https://lucide.dev/icons" 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="p-2 text-slate-400 hover:text-indigo-600"
+                                      title="查看图标列表"
+                                    >
+                                      <HelpCircle size={16} />
+                                    </a>
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">URL 链接</label>
+                                  <input 
+                                    type="text" 
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                    placeholder="https://..."
+                                    value={link.url || ''}
+                                    onChange={(e) => {
+                                      const newLinks = [...profile.links];
+                                      newLinks[idx] = { ...newLinks[idx], url: e.target.value };
+                                      setProfile({ ...profile, links: newLinks });
+                                    }}
+                                  />
+                                </div>
+                              </div>
                             </div>
                           ))}
+                          {profile.links.length === 0 && (
+                            <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                              <p className="text-sm text-slate-400">暂无社交链接，点击上方“添加链接”开始 DIY</p>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1343,17 +1744,27 @@ export default function App() {
                           <h1 className="text-4xl font-bold mb-2 text-slate-800">{profile.name}</h1>
                           <p className="text-xl text-slate-500">{profile.bio}</p>
                         </div>
-                        <div className="flex gap-3">
+                        <div className="flex flex-wrap gap-4">
                           {profile.links.map((link, idx) => (
-                            <a 
+                            <motion.a 
                               key={idx} 
                               href={link.url} 
                               target="_blank" 
                               rel="noopener noreferrer"
-                              className="w-12 h-12 glass rounded-2xl flex items-center justify-center text-slate-600 hover:text-indigo-600 hover:scale-110 transition-all border border-slate-200"
+                              whileHover={{ y: -4, scale: 1.05 }}
+                              className="flex items-center gap-3 px-5 py-3 glass rounded-2xl text-slate-600 hover:text-indigo-600 transition-all shadow-sm group border border-slate-200"
                             >
-                              {link.icon === 'github' ? <Github size={20} /> : <Twitter size={20} />}
-                            </a>
+                              <div className="p-2 bg-white rounded-xl shadow-sm group-hover:bg-indigo-50 transition-colors">
+                                {renderIcon(link.icon, 20)}
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-1">{link.name}</span>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-sm font-bold">访问</span>
+                                  <ArrowUpRight size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </div>
+                              </div>
+                            </motion.a>
                           ))}
                         </div>
                       </div>
@@ -1380,9 +1791,15 @@ export default function App() {
                                   value={config.github?.notebookRepo || ''}
                                   onChange={(e) => {
                                     const repo = e.target.value;
+                                    const selectedRepo = githubRepos.find(r => r.full_name === repo);
+                                    const defaultBranch = selectedRepo?.default_branch || 'main';
                                     const newConfig = {
                                       ...config,
-                                      github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), notebookRepo: repo }
+                                      github: { 
+                                        ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), 
+                                        notebookRepo: repo,
+                                        notebookBranch: defaultBranch
+                                      }
                                     };
                                     setConfig(newConfig);
                                     if (repo) {
@@ -1593,241 +2010,416 @@ export default function App() {
             >
               <h1 className="text-4xl font-bold mb-8">系统设置</h1>
               
-              <div className="space-y-6">
-                <section className="glass p-8 rounded-3xl">
-                  <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                    <Cloud size={24} className="text-indigo-600" />
-                    Markdown 同步配置
-                  </h2>
-                  
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <div>
-                        <p className="font-semibold">存储模式</p>
-                        <p className="text-sm text-slate-500">数据将保存为 .md 文件</p>
+              <div className="space-y-4">
+                {/* Sync Configuration Section */}
+                <section className="glass overflow-hidden rounded-3xl border border-slate-100/50 shadow-sm">
+                  <button 
+                    onClick={() => setActiveSettingsSection(activeSettingsSection === 'sync' ? null : 'sync')}
+                    className="w-full p-6 flex items-center justify-between hover:bg-slate-50/50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "p-2.5 rounded-2xl transition-colors",
+                        activeSettingsSection === 'sync' ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500"
+                      )}>
+                        <Cloud size={22} />
                       </div>
-                      <select 
-                        value={config.type}
-                        onChange={(e) => setConfig({ ...config, type: e.target.value as any })}
-                        className="bg-white border border-slate-200 rounded-lg px-3 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
-                      >
-                        <option value="local">本地缓存</option>
-                        <option value="github">GitHub 同步</option>
-                      </select>
+                      <div className="text-left">
+                        <h2 className="text-lg font-bold text-slate-800">Markdown 同步配置</h2>
+                        <p className="text-xs text-slate-500">配置 GitHub 仓库以实现多端数据同步</p>
+                      </div>
                     </div>
+                    <ChevronDown 
+                      size={20} 
+                      className={cn("text-slate-400 transition-transform duration-300", activeSettingsSection === 'sync' && "rotate-180")} 
+                    />
+                  </button>
+                  
+                  <AnimatePresence>
+                    {activeSettingsSection === 'sync' && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                      >
+                        <div className="p-8 pt-0 space-y-6 border-t border-slate-50">
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div>
+                                <p className="font-semibold">存储模式</p>
+                                <p className="text-sm text-slate-500">数据将保存为 .md 文件</p>
+                              </div>
+                              <select 
+                                value={config.type}
+                                onChange={(e) => setConfig({ ...config, type: e.target.value as any })}
+                                className="bg-white border border-slate-200 rounded-lg px-3 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
+                              >
+                                <option value="local">本地缓存</option>
+                                <option value="github">GitHub 同步</option>
+                              </select>
+                            </div>
 
-                    {config.type === 'github' && (
-                      <div className="space-y-4 pt-4">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium text-slate-600">GitHub Token</label>
-                          <div className="flex gap-2">
-                            <input 
-                              type="password" 
-                              className="input-field" 
-                              placeholder="ghp_xxxxxxxxxxxx"
-                              value={config.github?.token || ''}
-                              onChange={(e) => setConfig({
-                                ...config,
-                                github: { ...(config.github || { repo: '', branch: 'main', path: 'zenspace.md' }), token: e.target.value }
-                              })}
-                            />
-                            <button 
-                              onClick={fetchGithubRepos}
-                              disabled={isFetchingGithub || !config.github?.token}
-                              className="btn-secondary px-4 py-2 whitespace-nowrap flex items-center gap-2"
-                            >
-                              {isFetchingGithub ? <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Download size={16} />}
-                              加载仓库
-                            </button>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-600">仓库 (User/Repo)</label>
-                            {githubRepos.length > 0 ? (
-                              <select 
-                                className="input-field"
-                                value={config.github?.repo || ''}
-                                onChange={(e) => {
-                                  const repo = e.target.value;
-                                  setConfig({
-                                    ...config,
-                                    github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo }
-                                  });
-                                  fetchGithubBranches(repo);
-                                }}
-                              >
-                                <option value="">选择仓库</option>
-                                {githubRepos.map(r => (
-                                  <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input 
-                                type="text" 
-                                className="input-field" 
-                                placeholder="username/repo"
-                                value={config.github?.repo || ''}
-                                onChange={(e) => setConfig({
-                                  ...config,
-                                  github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo: e.target.value }
-                                })}
-                              />
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-600">分支</label>
-                            {githubBranches.length > 0 ? (
-                              <select 
-                                className="input-field"
-                                value={config.github?.branch || 'main'}
-                                onChange={(e) => {
-                                  const branch = e.target.value;
-                                  setConfig({
-                                    ...config,
-                                    github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch }
-                                  });
-                                  if (config.github?.repo) {
-                                    fetchGithubFiles(config.github.repo, branch);
-                                  }
-                                }}
-                              >
-                                {githubBranches.map(b => (
-                                  <option key={b.name} value={b.name}>{b.name}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input 
-                                type="text" 
-                                className="input-field" 
-                                placeholder="main"
-                                value={config.github?.branch || 'main'}
-                                onChange={(e) => setConfig({
-                                  ...config,
-                                  github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch: e.target.value }
-                                })}
-                              />
-                            )}
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium text-slate-600">存储路径 (.md)</label>
-                          <div className="flex gap-2">
-                            <div className="flex-1 relative">
-                              {githubFiles.length > 0 ? (
-                                <select 
-                                  className="input-field appearance-none"
-                                  value={config.github?.path || 'zenspace.md'}
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      setConfig({
+                            {config.type === 'github' && (
+                              <div className="space-y-4 pt-4">
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-600">GitHub Token</label>
+                                  <div className="flex gap-2">
+                                    <input 
+                                      type="password" 
+                                      className="input-field" 
+                                      placeholder="ghp_xxxxxxxxxxxx"
+                                      value={config.github?.token || ''}
+                                      onChange={(e) => setConfig({
                                         ...config,
-                                        github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
-                                      });
-                                    }
-                                  }}
-                                >
-                                  <option value="">选择已有文件</option>
-                                  {githubFiles.map(f => (
-                                    <option key={f.path} value={f.path}>{f.name}</option>
-                                  ))}
-                                </select>
-                              ) : (
+                                        github: { ...(config.github || { repo: '', branch: 'main', path: 'zenspace.md' }), token: e.target.value }
+                                      })}
+                                    />
+                                    <button 
+                                      onClick={fetchGithubRepos}
+                                      disabled={isFetchingGithub || !config.github?.token}
+                                      className="btn-secondary px-4 py-2 whitespace-nowrap flex items-center gap-2"
+                                    >
+                                      {isFetchingGithub ? <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Download size={16} />}
+                                      加载仓库
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-slate-600">仓库 (User/Repo)</label>
+                                    {githubRepos.length > 0 ? (
+                                      <select 
+                                        className="input-field"
+                                        value={config.github?.repo || ''}
+                                        onChange={(e) => {
+                                          const repo = e.target.value;
+                                          const selectedRepo = githubRepos.find(r => r.full_name === repo);
+                                          const defaultBranch = selectedRepo?.default_branch || 'main';
+                                          setConfig({
+                                            ...config,
+                                            github: { 
+                                              ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), 
+                                              repo,
+                                              branch: defaultBranch
+                                            }
+                                          });
+                                          if (repo) {
+                                            fetchGithubBranches(repo);
+                                          }
+                                        }}
+                                      >
+                                        <option value="">选择仓库</option>
+                                        {githubRepos.map(r => (
+                                          <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input 
+                                        type="text" 
+                                        className="input-field" 
+                                        placeholder="username/repo"
+                                        value={config.github?.repo || ''}
+                                        onChange={(e) => setConfig({
+                                          ...config,
+                                          github: { ...(config.github || { token: '', branch: 'main', path: 'zenspace.md' }), repo: e.target.value }
+                                        })}
+                                      />
+                                    )}
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium text-slate-600">分支</label>
+                                    {githubBranches.length > 0 ? (
+                                      <select 
+                                        className="input-field"
+                                        value={config.github?.branch || 'main'}
+                                        onChange={(e) => {
+                                          const branch = e.target.value;
+                                          setConfig({
+                                            ...config,
+                                            github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch }
+                                          });
+                                          if (config.github?.repo) {
+                                            fetchGithubFiles(config.github.repo, branch);
+                                          }
+                                        }}
+                                      >
+                                        {githubBranches.map(b => (
+                                          <option key={b.name} value={b.name}>{b.name}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input 
+                                        type="text" 
+                                        className="input-field" 
+                                        placeholder="main"
+                                        value={config.github?.branch || 'main'}
+                                        onChange={(e) => setConfig({
+                                          ...config,
+                                          github: { ...(config.github || { token: '', repo: '', path: 'zenspace.md' }), branch: e.target.value }
+                                        })}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium text-slate-600">存储路径 (.md)</label>
+                                  <div className="flex gap-2">
+                                    <div className="flex-1 relative">
+                                      {githubFiles.length > 0 ? (
+                                        <select 
+                                          className="input-field appearance-none"
+                                          value={config.github?.path || 'zenspace.md'}
+                                          onChange={(e) => {
+                                            if (e.target.value) {
+                                              setConfig({
+                                                ...config,
+                                                github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          <option value="">选择已有文件</option>
+                                          {githubFiles.map(f => (
+                                            <option key={f.path} value={f.path}>{f.name}</option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <input 
+                                          type="text" 
+                                          className="input-field" 
+                                          placeholder="zenspace.md"
+                                          value={config.github?.path || 'zenspace.md'}
+                                          onChange={(e) => setConfig({
+                                            ...config,
+                                            github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                                          })}
+                                        />
+                                      )}
+                                      {githubFiles.length > 0 && (
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                                          <ChevronDown size={16} />
+                                        </div>
+                                      )}
+                                    </div>
+                                    {githubFiles.length > 0 && (
+                                      <button 
+                                        onClick={() => {
+                                          const newPath = prompt('请输入新的存储路径 (例如: data/my-sync.md):');
+                                          if (newPath) {
+                                            const formattedPath = newPath.endsWith('.md') ? newPath : `${newPath}.md`;
+                                            setConfig({
+                                              ...config,
+                                              github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: formattedPath }
+                                            });
+                                          }
+                                        }}
+                                        className="btn-secondary px-3 py-2"
+                                        title="输入新路径"
+                                      >
+                                        <PlusCircle size={18} />
+                                      </button>
+                                    )}
+                                  </div>
+                                  {githubFiles.length > 0 && config.github?.path && (
+                                    <p className="text-[10px] text-slate-400 mt-1">当前选择: <span className="text-indigo-600 font-mono">{config.github.path}</span></p>
+                                  )}
+                                </div>
+                                <div className="space-y-3 pt-2">
+                                  <label className="text-sm font-medium text-slate-600 block">同步内容</label>
+                                  <div className="flex flex-wrap gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                      <input 
+                                        type="checkbox" 
+                                        checked={config.github?.syncProfile !== false}
+                                        onChange={(e) => setConfig({
+                                          ...config,
+                                          github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncProfile: e.target.checked }
+                                        })}
+                                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                      />
+                                      <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">个人资料 (Markdown)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                      <input 
+                                        type="checkbox" 
+                                        checked={config.github?.syncBookmarks !== false}
+                                        onChange={(e) => setConfig({
+                                          ...config,
+                                          github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncBookmarks: e.target.checked }
+                                        })}
+                                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                      />
+                                      <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">收藏夹 (含分类/结构)</span>
+                                    </label>
+                                  </div>
+                                </div>
+                                
+                                <div className="pt-4 border-t border-slate-100">
+                                  <p className="text-xs text-slate-500">提示：您可以在“个人资料”选项卡中直接切换 GitHub 笔记本的仓库和分支。</p>
+                                </div>
+
+                                <div className="flex gap-3 pt-2">
+                                  <button 
+                                    onClick={handleSync}
+                                    disabled={isFetchingFiles}
+                                    className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                                    同步到 GitHub
+                                  </button>
+                                  <button 
+                                    onClick={handlePull}
+                                    disabled={isFetchingFiles}
+                                    className="flex-1 btn-secondary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
+                                    从 GitHub 加载
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </section>
+
+                {/* AI Assistant Permissions Section */}
+                <section className="glass overflow-hidden rounded-3xl border border-slate-100/50 shadow-sm">
+                  <button 
+                    onClick={() => setActiveSettingsSection(activeSettingsSection === 'ai_permissions' ? null : 'ai_permissions')}
+                    className="w-full p-6 flex items-center justify-between hover:bg-slate-50/50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "p-2.5 rounded-2xl transition-colors",
+                        activeSettingsSection === 'ai_permissions' ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500"
+                      )}>
+                        <Bot size={22} />
+                      </div>
+                      <div className="text-left">
+                        <h2 className="text-lg font-bold text-slate-800">AI 助手权限设置</h2>
+                        <p className="text-xs text-slate-500">控制 AI 助手可以访问和修改哪些内容</p>
+                      </div>
+                    </div>
+                    <ChevronDown 
+                      size={20} 
+                      className={cn("text-slate-400 transition-transform duration-300", activeSettingsSection === 'ai_permissions' && "rotate-180")} 
+                    />
+                  </button>
+
+                  <AnimatePresence>
+                    {activeSettingsSection === 'ai_permissions' && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                      >
+                        <div className="p-8 pt-0 space-y-6 border-t border-slate-50">
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-white rounded-xl shadow-sm">
+                                  <User size={18} className="text-indigo-600" />
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-slate-800">个人资料访问</p>
+                                  <p className="text-xs text-slate-500">允许 AI 查看姓名、简介等个人信息</p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
                                 <input 
-                                  type="text" 
-                                  className="input-field" 
-                                  placeholder="zenspace.md"
-                                  value={config.github?.path || 'zenspace.md'}
+                                  type="checkbox" 
+                                  className="sr-only peer"
+                                  checked={config.aiPermissions?.profile !== false}
                                   onChange={(e) => setConfig({
                                     ...config,
-                                    github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: e.target.value }
+                                    aiPermissions: { ...(config.aiPermissions || { profile: true, files: true, bookmarks: true, listRepos: true }), profile: e.target.checked }
                                   })}
                                 />
-                              )}
-                              {githubFiles.length > 0 && (
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                                  <ChevronDown size={16} />
-                                </div>
-                              )}
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                              </label>
                             </div>
-                            {githubFiles.length > 0 && (
-                              <button 
-                                onClick={() => {
-                                  const newPath = prompt('请输入新的存储路径 (例如: data/my-sync.md):');
-                                  if (newPath) {
-                                    const formattedPath = newPath.endsWith('.md') ? newPath : `${newPath}.md`;
-                                    setConfig({
-                                      ...config,
-                                      github: { ...(config.github || { token: '', repo: '', branch: 'main' }), path: formattedPath }
-                                    });
-                                  }
-                                }}
-                                className="btn-secondary px-3 py-2"
-                                title="输入新路径"
-                              >
-                                <PlusCircle size={18} />
-                              </button>
-                            )}
-                          </div>
-                          {githubFiles.length > 0 && config.github?.path && (
-                            <p className="text-[10px] text-slate-400 mt-1">当前选择: <span className="text-indigo-600 font-mono">{config.github.path}</span></p>
-                          )}
-                        </div>
-                        <div className="space-y-3 pt-2">
-                          <label className="text-sm font-medium text-slate-600 block">同步内容</label>
-                          <div className="flex flex-wrap gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                              <input 
-                                type="checkbox" 
-                                checked={config.github?.syncProfile !== false}
-                                onChange={(e) => setConfig({
-                                  ...config,
-                                  github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncProfile: e.target.checked }
-                                })}
-                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                              />
-                              <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">个人资料 (Markdown)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                              <input 
-                                type="checkbox" 
-                                checked={config.github?.syncBookmarks !== false}
-                                onChange={(e) => setConfig({
-                                  ...config,
-                                  github: { ...(config.github || { token: '', repo: '', branch: 'main', path: 'zenspace.md' }), syncBookmarks: e.target.checked }
-                                })}
-                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                              />
-                              <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">收藏夹 (含分类/结构)</span>
-                            </label>
-                          </div>
-                        </div>
-                        
-                        <div className="pt-4 border-t border-slate-100">
-                          <p className="text-xs text-slate-500">提示：您可以在“个人资料”选项卡中直接切换 GitHub 笔记本的仓库和分支。</p>
-                        </div>
 
-                        <div className="flex gap-3 pt-2">
-                          <button 
-                            onClick={handleSync}
-                            disabled={isFetchingFiles}
-                            className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                            同步到 GitHub
-                          </button>
-                          <button 
-                            onClick={handlePull}
-                            disabled={isFetchingFiles}
-                            className="flex-1 btn-secondary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {isFetchingFiles ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-                            从 GitHub 加载
-                          </button>
+                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-white rounded-xl shadow-sm">
+                                  <FileText size={18} className="text-indigo-600" />
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-slate-800">GitHub 文件修改</p>
+                                  <p className="text-xs text-slate-500">允许 AI 修改 GitHub 仓库中的文件</p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  className="sr-only peer"
+                                  checked={config.aiPermissions?.files !== false}
+                                  onChange={(e) => setConfig({
+                                    ...config,
+                                    aiPermissions: { ...(config.aiPermissions || { profile: true, files: true, bookmarks: true, listRepos: true }), files: e.target.checked }
+                                  })}
+                                />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                              </label>
+                            </div>
+
+                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-white rounded-xl shadow-sm">
+                                  <BookMarked size={18} className="text-indigo-600" />
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-slate-800">收藏夹访问</p>
+                                  <p className="text-xs text-slate-500">允许 AI 查看和管理您的书签与文件夹</p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  className="sr-only peer"
+                                  checked={config.aiPermissions?.bookmarks !== false}
+                                  onChange={(e) => setConfig({
+                                    ...config,
+                                    aiPermissions: { ...(config.aiPermissions || { profile: true, files: true, bookmarks: true, listRepos: true }), bookmarks: e.target.checked }
+                                  })}
+                                />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                              </label>
+                            </div>
+                            
+                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-white rounded-xl shadow-sm">
+                                  <Github size={18} className="text-indigo-600" />
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-slate-800">GitHub 仓库列表</p>
+                                  <p className="text-xs text-slate-500">允许 AI 列出您的所有 GitHub 仓库</p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  className="sr-only peer"
+                                  checked={config.aiPermissions?.listRepos !== false}
+                                  onChange={(e) => setConfig({
+                                    ...config,
+                                    aiPermissions: { ...(config.aiPermissions || { profile: true, files: true, bookmarks: true, listRepos: true }), listRepos: e.target.checked }
+                                  })}
+                                />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                              </label>
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      </motion.div>
                     )}
-                  </div>
+                  </AnimatePresence>
                 </section>
               </div>
             </motion.div>
@@ -1839,7 +2431,7 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="max-w-4xl mx-auto h-[calc(100vh-12rem)] flex flex-col"
+              className="max-w-6xl mx-auto h-[calc(100vh-12rem)] flex flex-col"
             >
               <div className="mb-6 flex items-center justify-between">
                 <div>
@@ -1851,9 +2443,9 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <select 
-                    value={config.activeAIId}
+                    value={config.activeAIId || ''}
                     onChange={(e) => handleSelectAIModel(e.target.value)}
-                    className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                    className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-sm"
                   >
                     {config.aiModels.map(m => (
                       <option key={m.id} value={m.id}>{m.name}</option>
@@ -1865,7 +2457,7 @@ export default function App() {
                       setEditingAIModel({ id: '', name: '', apiKey: '', apiUrl: '', model: 'gemini-3-flash-preview' });
                       setShowAIModelModal(true);
                     }}
-                    className="btn-primary p-3"
+                    className="btn-primary p-3 shadow-lg shadow-indigo-200"
                   >
                     <Plus size={20} />
                   </button>
@@ -1873,47 +2465,137 @@ export default function App() {
               </div>
 
               <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden">
-                {/* Models List */}
-                <div className="w-full lg:w-64 glass rounded-[2rem] p-4 overflow-y-auto no-scrollbar">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">已保存模型</h3>
-                  <div className="space-y-2">
-                    {config.aiModels.map(m => (
-                      <div 
-                        key={m.id}
-                        className={cn(
-                          "group p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between",
-                          config.activeAIId === m.id ? "bg-indigo-50 border-indigo-200" : "bg-white border-slate-100 hover:border-indigo-100"
-                        )}
-                        onClick={() => handleSelectAIModel(m.id)}
+                {/* Sidebar: Sessions & Models */}
+                <div className="w-full lg:w-80 flex flex-col gap-6 overflow-hidden">
+                  {/* Sessions List */}
+                  <div className="flex-1 glass rounded-[2.5rem] p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl">
+                    <div className="flex items-center justify-between mb-5 px-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">对话历史</h3>
+                      <button 
+                        onClick={handleNewChat}
+                        className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all hover:scale-110 active:scale-95"
+                        title="新对话"
                       >
-                        <div className="min-w-0">
-                          <p className={cn("font-bold truncate", config.activeAIId === m.id ? "text-indigo-600" : "text-slate-700")}>{m.name}</p>
-                          <p className="text-[10px] text-slate-400 truncate">{m.model || '默认模型'}</p>
+                        <PlusSquare size={20} />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-1">
+                      {chatSessions.map(session => (
+                        <div 
+                          key={session.id}
+                          className={cn(
+                            "group p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between relative overflow-hidden",
+                            activeChatId === session.id ? "bg-indigo-50/80 border-indigo-200 shadow-sm" : "bg-white/60 border-slate-100 hover:border-indigo-100 hover:bg-white/80"
+                          )}
+                          onClick={() => {
+                            if (editingSessionId !== session.id) {
+                              setActiveChatId(session.id);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className={cn(
+                              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-110",
+                              activeChatId === session.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200" : "bg-slate-100 text-slate-400"
+                            )}>
+                              <MessageSquare size={18} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              {editingSessionId === session.id ? (
+                                <input 
+                                  autoFocus
+                                  className="text-sm font-bold bg-white border border-indigo-200 rounded-lg px-2 py-1 w-full outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                  value={editingSessionTitle}
+                                  onChange={(e) => setEditingSessionTitle(e.target.value)}
+                                  onBlur={() => handleRenameChat(session.id, editingSessionTitle)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleRenameChat(session.id, editingSessionTitle);
+                                    if (e.key === 'Escape') setEditingSessionId(null);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              ) : (
+                                <>
+                                  <p className={cn("text-sm font-bold truncate", activeChatId === session.id ? "text-indigo-600" : "text-slate-700")}>
+                                    {session.title}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    {new Date(session.updatedAt).toLocaleDateString()}
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setEditingSessionId(session.id);
+                                setEditingSessionTitle(session.title);
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors"
+                              title="重命名"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleClearChat(session.id); }}
+                              className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-white rounded-lg transition-colors"
+                              title="删除对话"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); setEditingAIModel(m); setShowAIModelModal(true); }}
-                            className="p-1 text-slate-400 hover:text-indigo-600"
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Models List (Collapsible) */}
+                  <div className={cn(
+                    "glass rounded-[2.5rem] p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl transition-all duration-300",
+                    isAIModelsExpanded ? "flex-1" : "h-20"
+                  )}>
+                    <div 
+                      className="flex items-center justify-between mb-4 px-2 cursor-pointer"
+                      onClick={() => setIsAIModelsExpanded(!isAIModelsExpanded)}
+                    >
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">AI 模型</h3>
+                      <button className="p-1.5 text-slate-400 hover:bg-slate-50 rounded-lg transition-colors">
+                        {isAIModelsExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                      </button>
+                    </div>
+                    {isAIModelsExpanded && (
+                      <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-1">
+                        {config.aiModels.map(m => (
+                          <div 
+                            key={m.id}
+                            className={cn(
+                              "group p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between",
+                              config.activeAIId === m.id ? "bg-indigo-50/80 border-indigo-200 shadow-sm" : "bg-white/60 border-slate-100 hover:border-indigo-100 hover:bg-white/80"
+                            )}
+                            onClick={() => handleSelectAIModel(m.id)}
                           >
-                            <Edit3 size={14} />
-                          </button>
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleDeleteAIModel(m.id); }}
-                            className="p-1 text-slate-400 hover:text-rose-500"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                            <div className="min-w-0 flex-1">
+                              <p className={cn("text-xs font-bold truncate", config.activeAIId === m.id ? "text-indigo-600" : "text-slate-700")}>{m.name}</p>
+                            </div>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setEditingAIModel(m); setShowAIModelModal(true); }}
+                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    {config.aiModels.length === 0 && (
-                      <p className="text-sm text-slate-400 text-center py-8">暂无模型</p>
                     )}
                   </div>
                 </div>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col glass rounded-[2.5rem] overflow-hidden">
+                <div className="flex-1 flex flex-col glass rounded-[2.5rem] overflow-hidden relative">
                   {!activeAIModel ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
                       <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-6 text-indigo-600">
@@ -1924,7 +2606,7 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
+                      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar relative">
                         {messages.length === 0 && (
                           <div className="h-full flex flex-col items-center justify-center text-center opacity-50">
                             <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mb-4">
@@ -1978,6 +2660,21 @@ export default function App() {
                             </div>
                           </div>
                         )}
+                        
+                        <AnimatePresence>
+                          {showScrollButton && (
+                            <motion.button
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 10 }}
+                              onClick={() => scrollToBottom()}
+                              className="sticky bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-indigo-100 text-indigo-600 px-4 py-2 rounded-full shadow-lg flex items-center gap-2 text-xs font-bold hover:bg-indigo-600 hover:text-white transition-all z-20"
+                            >
+                              <ArrowDownCircle size={14} />
+                              新消息，点击下滑
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
                       </div>
                       <div className="p-6 bg-white border-t border-slate-100">
                         <div className="flex gap-3">
@@ -2040,7 +2737,7 @@ export default function App() {
                     <div className="relative group">
                       <input 
                         type="text" placeholder="URL" className="input-field pr-12"
-                        value={newBookmark.url} onChange={(e) => {
+                        value={newBookmark.url || ''} onChange={(e) => {
                           setNewBookmark({ ...newBookmark, url: e.target.value });
                           setAnalysisError(null);
                         }}
@@ -2134,12 +2831,12 @@ export default function App() {
 
                 <input 
                   type="text" placeholder="名称" className="input-field"
-                  value={newBookmark.title} onChange={(e) => setNewBookmark({ ...newBookmark, title: e.target.value })}
+                  value={newBookmark.title || ''} onChange={(e) => setNewBookmark({ ...newBookmark, title: e.target.value })}
                 />
                 <div className="grid grid-cols-2 gap-4">
                   <input 
                     type="text" placeholder="分类" className="input-field"
-                    value={newBookmark.category} onChange={(e) => setNewBookmark({ ...newBookmark, category: e.target.value })}
+                    value={newBookmark.category || ''} onChange={(e) => setNewBookmark({ ...newBookmark, category: e.target.value })}
                   />
                   <select 
                     className="input-field"
@@ -2154,7 +2851,7 @@ export default function App() {
                 </div>
                 <textarea 
                   placeholder="描述" className="input-field min-h-[100px]"
-                  value={newBookmark.description} onChange={(e) => setNewBookmark({ ...newBookmark, description: e.target.value })}
+                  value={newBookmark.description || ''} onChange={(e) => setNewBookmark({ ...newBookmark, description: e.target.value })}
                 />
                 <button 
                   onClick={handleAddBookmark} 
@@ -2190,14 +2887,14 @@ export default function App() {
                   <label className="text-sm font-semibold text-slate-600">模型名称</label>
                   <input 
                     type="text" className="input-field" placeholder="例如: 我的 Gemini"
-                    value={editingAIModel.name} onChange={(e) => setEditingAIModel({ ...editingAIModel, name: e.target.value })}
+                    value={editingAIModel.name || ''} onChange={(e) => setEditingAIModel({ ...editingAIModel, name: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-slate-600">API Key</label>
                   <input 
                     type="password" className="input-field" placeholder="您的 API 密钥"
-                    value={editingAIModel.apiKey} onChange={(e) => setEditingAIModel({ ...editingAIModel, apiKey: e.target.value })}
+                    value={editingAIModel.apiKey || ''} onChange={(e) => setEditingAIModel({ ...editingAIModel, apiKey: e.target.value })}
                   />
                   <p className="text-[10px] text-slate-400 ml-1">
                     提示：如果没有 API Key，可以输入 <code className="bg-slate-100 px-1 rounded text-indigo-600">demo</code> 来开启演示模式进行功能验证。
@@ -2207,23 +2904,33 @@ export default function App() {
                   <label className="text-sm font-semibold text-slate-600">API URL (可选)</label>
                   <input 
                     type="text" className="input-field" placeholder="留空则使用默认 Gemini"
-                    value={editingAIModel.apiUrl} onChange={(e) => setEditingAIModel({ ...editingAIModel, apiUrl: e.target.value })}
+                    value={editingAIModel.apiUrl || ''} onChange={(e) => setEditingAIModel({ ...editingAIModel, apiUrl: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-slate-600">模型标识符 (可选)</label>
                   <input 
                     type="text" className="input-field" placeholder="gemini-3-flash-preview"
-                    value={editingAIModel.model} onChange={(e) => setEditingAIModel({ ...editingAIModel, model: e.target.value })}
+                    value={editingAIModel.model || ''} onChange={(e) => setEditingAIModel({ ...editingAIModel, model: e.target.value })}
                   />
                 </div>
-                <button 
-                  onClick={handleSaveAIModel}
-                  disabled={!editingAIModel.name}
-                  className="w-full btn-primary py-4"
-                >
-                  保存模型
-                </button>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={handleTestAIModel}
+                    disabled={isTestingAI || !editingAIModel.apiKey}
+                    className="flex-1 btn-secondary py-4 flex items-center justify-center gap-2"
+                  >
+                    {isTestingAI ? <Loader2 className="animate-spin" size={18} /> : <RotateCw size={18} />}
+                    测试连接
+                  </button>
+                  <button 
+                    onClick={handleSaveAIModel}
+                    disabled={!editingAIModel.name}
+                    className="flex-[2] btn-primary py-4"
+                  >
+                    保存模型
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
