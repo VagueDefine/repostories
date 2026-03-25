@@ -157,6 +157,7 @@ export default function App() {
   const [editingAIModel, setEditingAIModel] = useState<AIModelConfig | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const iconInputRef = React.useRef<HTMLInputElement>(null);
   const [analysisError, setAnalysisError] = useState<React.ReactNode | null>(null);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
 
@@ -186,7 +187,8 @@ export default function App() {
     url: '',
     category: '常用',
     description: '',
-    type: 'link'
+    type: 'link',
+    icon: ''
   });
 
   useEffect(() => {
@@ -270,7 +272,8 @@ export default function App() {
         url: newBookmark.type === 'folder' ? '' : (newBookmark.url?.trim().startsWith('http') ? newBookmark.url.trim() : `https://${newBookmark.url?.trim()}`),
         category: newBookmark.category?.trim() || b.category,
         description: newBookmark.description?.trim(),
-        parentId: newBookmark.parentId || undefined
+        parentId: newBookmark.parentId || undefined,
+        icon: newBookmark.icon
       } : b));
       addToast('已更新内容', 'success');
     } else {
@@ -283,7 +286,8 @@ export default function App() {
         description: newBookmark.description?.trim(),
         createdAt: Date.now(),
         type: newBookmark.type || 'link',
-        parentId: newBookmark.parentId || undefined
+        parentId: newBookmark.parentId || undefined,
+        icon: newBookmark.icon
       };
       
       setBookmarks([bookmark, ...bookmarks]);
@@ -309,7 +313,7 @@ export default function App() {
     }
     
     setIsAddModalOpen(false);
-    setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link' });
+    setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', icon: '' });
   };
 
   const handleEditBookmark = (bookmark: Bookmark) => {
@@ -1087,7 +1091,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder', parentId: currentFolderId || undefined });
+                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'folder', parentId: currentFolderId || undefined, icon: '' });
                       setIsAddModalOpen(true);
                     }}
                     className="flex items-center gap-2 px-5 py-3 bg-white border border-slate-100 text-slate-600 font-medium rounded-2xl hover:bg-slate-50 transition-all shadow-sm active:scale-95"
@@ -1097,7 +1101,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', parentId: currentFolderId || undefined });
+                      setNewBookmark({ title: '', url: '', category: '常用', description: '', type: 'link', parentId: currentFolderId || undefined, icon: '' });
                       setIsAddModalOpen(true);
                     }}
                     className="flex items-center gap-2 px-7 py-3 bg-indigo-600 text-white font-medium rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 active:scale-95"
@@ -2087,6 +2091,47 @@ export default function App() {
                     )}
                   </div>
                 )}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">图标 (URL 或 上传)</label>
+                    <button 
+                      onClick={() => iconInputRef.current?.click()}
+                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                    >
+                      <Upload size={12} /> 上传本地图标
+                    </button>
+                    <input 
+                      type="file" 
+                      ref={iconInputRef} 
+                      className="hidden" 
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setNewBookmark({ ...newBookmark, icon: reader.result as string });
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                      {newBookmark.icon ? (
+                        <img src={newBookmark.icon} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        newBookmark.type === 'folder' ? <Folder size={20} className="text-slate-300" /> : <Globe size={20} className="text-slate-300" />
+                      )}
+                    </div>
+                    <input 
+                      type="text" placeholder="图标 URL" className="input-field flex-1"
+                      value={newBookmark.icon || ''} onChange={(e) => setNewBookmark({ ...newBookmark, icon: e.target.value })}
+                    />
+                  </div>
+                </div>
+
                 <input 
                   type="text" placeholder="名称" className="input-field"
                   value={newBookmark.title} onChange={(e) => setNewBookmark({ ...newBookmark, title: e.target.value })}
@@ -2232,6 +2277,10 @@ function BookmarkCard({ bookmark, onDelete, onEdit, onOpenFolder }: { bookmark: 
   const isFolder = bookmark.type === 'folder';
   const [iconError, setIconError] = React.useState(false);
 
+  React.useEffect(() => {
+    setIconError(false);
+  }, [bookmark.icon, bookmark.url]);
+
   const getFaviconUrl = (url: string) => {
     try {
       const domain = new URL(url).hostname;
@@ -2271,10 +2320,18 @@ function BookmarkCard({ bookmark, onDelete, onEdit, onOpenFolder }: { bookmark: 
       <div className="flex flex-col h-full">
         <div className="flex items-start gap-4 mb-5">
           <div className={cn(
-            "w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-inner",
+            "w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-inner overflow-hidden",
             isFolder ? "bg-indigo-50 text-indigo-600" : "bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
           )}>
-            {isFolder ? (
+            {bookmark.icon && !iconError ? (
+              <img 
+                src={bookmark.icon} 
+                alt="" 
+                className="w-full h-full object-cover"
+                onError={() => setIconError(true)}
+                referrerPolicy="no-referrer"
+              />
+            ) : isFolder ? (
               <Folder size={28} strokeWidth={1.5} />
             ) : (
               favicon && !iconError ? (

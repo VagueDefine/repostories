@@ -7,6 +7,7 @@ export interface Bookmark {
   createdAt: number;
   type: 'link' | 'folder';
   parentId?: string;
+  icon?: string;
 }
 
 export interface AIModelConfig {
