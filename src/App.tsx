@@ -1397,7 +1397,7 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 sm:p-6 md:p-8 lg:p-12 overflow-y-auto">
+      <main className="flex-1 p-4 pb-24 sm:p-6 md:p-8 lg:p-12 overflow-y-auto overflow-x-hidden">
         <AnimatePresence mode="wait">
           {activeTab === 'bookmarks' && (
             <motion.div
@@ -1423,7 +1423,7 @@ export default function App() {
                     )}
                     <h1 
                       className={cn(
-                        "text-3xl md:text-5xl font-black tracking-tight text-slate-900",
+                        "text-2xl sm:text-3xl md:text-5xl font-black tracking-tight text-slate-900",
                         currentFolderId ? "cursor-pointer hover:text-indigo-600 transition-colors" : ""
                       )}
                       onClick={() => currentFolderId && setCurrentFolderId(null)}
@@ -1431,7 +1431,7 @@ export default function App() {
                       {currentFolderId ? bookmarks.find(b => b.id === currentFolderId)?.title : '我的收藏'}
                     </h1>
                   </div>
-                  <p className="text-slate-500 text-sm md:text-base font-medium max-w-md">数据将以 Markdown 格式存储，透明且安全。您的数字资产，由您掌控。</p>
+                  <p className="text-slate-500 text-xs sm:text-sm md:text-base font-medium max-w-md">数据将以 Markdown 格式存储，透明且安全。您的数字资产，由您掌控。</p>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2 md:gap-3">
@@ -2543,21 +2543,21 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="max-w-6xl mx-auto h-[calc(100vh-12rem)] flex flex-col"
+              className="max-w-6xl mx-auto h-[calc(100vh-14rem)] md:h-[calc(100vh-12rem)] flex flex-col px-4 md:px-0"
             >
-              <div className="mb-6 flex items-center justify-between">
-                <div>
-                  <h1 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3 text-slate-800">
-                    <Sparkles className="text-indigo-600" />
-                    {activeAIModel?.name || 'AI 助手'}
+              <div className="mb-4 md:mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <h1 className="text-xl sm:text-2xl md:text-4xl font-bold tracking-tight mb-1 md:mb-2 flex items-center gap-2 md:gap-3 text-slate-800">
+                    <Sparkles className="text-indigo-600 size-5 sm:size-6 md:size-8 shrink-0" />
+                    <span className="truncate">{activeAIModel?.name || 'AI 助手'}</span>
                   </h1>
-                  <p className="text-slate-500">管理多个 AI 模型并进行智能对话。</p>
+                  <p className="text-[10px] sm:text-xs md:text-sm text-slate-500 truncate">管理多个 AI 模型并进行智能对话。</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-full md:w-auto">
                   <select 
                     value={config.activeAIId || ''}
                     onChange={(e) => handleSelectAIModel(e.target.value)}
-                    className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-sm"
+                    className="flex-1 md:flex-none bg-white border border-slate-200 rounded-xl px-3 md:px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-sm"
                   >
                     {config.aiModels.map(m => (
                       <option key={m.id} value={m.id}>{m.name}</option>
@@ -2569,34 +2569,53 @@ export default function App() {
                       setEditingAIModel({ id: '', name: '', apiKey: '', apiUrl: '', model: 'gemini-3-flash-preview' });
                       setShowAIModelModal(true);
                     }}
-                    className="btn-primary p-3 shadow-lg shadow-indigo-200"
+                    className="btn-primary p-2 md:p-3 shadow-lg shadow-indigo-200 shrink-0"
                   >
                     <Plus size={20} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden">
+              <div className="flex-1 flex flex-col lg:flex-row gap-4 md:gap-6 overflow-hidden">
                 {/* Sidebar: Sessions & Models */}
-                <div className="w-full lg:w-80 flex flex-col gap-6 overflow-hidden">
+                <div className="w-full lg:w-80 flex flex-col gap-4 md:gap-6 overflow-hidden shrink-0">
                   {/* Sessions List */}
-                  <div className="flex-1 glass rounded-[2.5rem] p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl">
-                    <div className="flex items-center justify-between mb-5 px-2">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">对话历史</h3>
-                      <button 
-                        onClick={handleNewChat}
-                        className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all hover:scale-110 active:scale-95"
-                        title="新对话"
-                      >
-                        <PlusSquare size={20} />
-                      </button>
+                  <div className={cn(
+                    "glass rounded-3xl md:rounded-[2.5rem] p-4 md:p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl transition-all duration-300",
+                    activeTab === 'ai' && !activeChatId ? "flex-1" : "h-16 md:h-auto md:flex-1"
+                  )}>
+                    <div 
+                      className="flex items-center justify-between mb-2 md:mb-5 px-1 md:px-2 cursor-pointer md:cursor-default"
+                      onClick={() => {
+                        if (window.innerWidth < 1024) {
+                          // On mobile, if we have an active chat, clicking header might toggle view
+                          if (activeChatId) setActiveChatId(null);
+                        }
+                      }}
+                    >
+                      <h3 className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest">对话历史</h3>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleNewChat(); }}
+                          className="p-1.5 md:p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                          title="新对话"
+                        >
+                          <PlusSquare className="size-[18px] md:size-5" />
+                        </button>
+                        {activeChatId && (
+                          <ChevronDown size={16} className="text-slate-400 lg:hidden" />
+                        )}
+                      </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-1">
+                    <div className={cn(
+                      "flex-1 overflow-y-auto no-scrollbar space-y-2 md:space-y-3 pr-1",
+                      activeChatId && "hidden md:block"
+                    )}>
                       {chatSessions.map(session => (
                         <div 
                           key={session.id}
                           className={cn(
-                            "group p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between relative overflow-hidden",
+                            "group p-3 md:p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between relative overflow-hidden",
                             activeChatId === session.id ? "bg-indigo-50/80 border-indigo-200 shadow-sm" : "bg-white/60 border-slate-100 hover:border-indigo-100 hover:bg-white/80"
                           )}
                           onClick={() => {
@@ -2665,16 +2684,17 @@ export default function App() {
 
                   {/* Models List (Collapsible) */}
                   <div className={cn(
-                    "glass rounded-[2.5rem] p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl transition-all duration-300",
-                    isAIModelsExpanded ? "flex-1" : "h-20"
+                    "glass rounded-3xl md:rounded-[2.5rem] p-4 md:p-5 flex flex-col overflow-hidden border border-white/40 shadow-xl transition-all duration-300",
+                    isAIModelsExpanded ? "flex-1" : "h-14 md:h-20",
+                    activeChatId && "hidden md:flex"
                   )}>
                     <div 
-                      className="flex items-center justify-between mb-4 px-2 cursor-pointer"
+                      className="flex items-center justify-between mb-2 md:mb-4 px-1 md:px-2 cursor-pointer"
                       onClick={() => setIsAIModelsExpanded(!isAIModelsExpanded)}
                     >
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">AI 模型</h3>
-                      <button className="p-1.5 text-slate-400 hover:bg-slate-50 rounded-lg transition-colors">
-                        {isAIModelsExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                      <h3 className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest">AI 模型</h3>
+                      <button className="p-1 text-slate-400 hover:bg-slate-50 rounded-lg transition-colors">
+                        {isAIModelsExpanded ? <ChevronDown className="size-4 md:size-[18px]" /> : <ChevronRight className="size-4 md:size-[18px]" />}
                       </button>
                     </div>
                     {isAIModelsExpanded && (
@@ -2707,42 +2727,45 @@ export default function App() {
                 </div>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col glass rounded-[2.5rem] overflow-hidden relative">
+                <div className={cn(
+                  "flex-1 flex flex-col glass rounded-3xl md:rounded-[2.5rem] overflow-hidden relative transition-all duration-500",
+                  !activeChatId && "hidden md:flex"
+                )}>
                   {!activeAIModel ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                      <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-6 text-indigo-600">
-                        <Bot size={40} />
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-6 md:p-8">
+                      <div className="w-16 h-16 md:w-20 md:h-20 bg-indigo-50 rounded-2xl md:rounded-3xl flex items-center justify-center mb-4 md:mb-6 text-indigo-600">
+                        <Bot className="size-8 md:size-10" />
                       </div>
-                      <h2 className="text-2xl font-bold mb-4 text-slate-800">未选择模型</h2>
-                      <p className="text-slate-500 max-w-xs">请在左侧选择或点击上方按钮添加一个新的 AI 模型。</p>
+                      <h2 className="text-xl md:text-2xl font-bold mb-2 md:mb-4 text-slate-800">未选择模型</h2>
+                      <p className="text-xs md:text-sm text-slate-500 max-w-xs">请在左侧选择或点击上方按钮添加一个新的 AI 模型。</p>
                     </div>
                   ) : (
                     <>
-                      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar relative">
+                      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6 no-scrollbar relative">
                         {messages.length === 0 && (
                           <div className="h-full flex flex-col items-center justify-center text-center opacity-50">
-                            <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mb-4">
-                              <Sparkles size={32} />
+                            <div className="w-12 h-12 md:w-16 md:h-16 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center text-indigo-600 mb-4">
+                              <Sparkles className="size-6 md:size-8" />
                             </div>
-                            <p className="text-slate-500">您可以问我关于您的书签或个人资料的问题。</p>
+                            <p className="text-xs md:text-sm text-slate-500">您可以问我关于您的书签或个人资料的问题。</p>
                           </div>
                         )}
                         {messages.map((msg, idx) => (
                           <div 
                             key={idx} 
                             className={cn(
-                              "flex items-start gap-4 max-w-[85%]",
+                              "flex items-start gap-2 md:gap-4 max-w-[90%] md:max-w-[85%]",
                               msg.role === 'user' ? "ml-auto flex-row-reverse" : ""
                             )}
                           >
                             <div className={cn(
-                              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                              "w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl flex items-center justify-center shrink-0",
                               msg.role === 'user' ? "bg-indigo-600 text-white" : "bg-slate-100 text-indigo-600"
                             )}>
-                              {msg.role === 'user' ? <User size={20} /> : <Bot size={20} />}
+                              {msg.role === 'user' ? <User className="size-4 md:size-5" /> : <Bot className="size-4 md:size-5" />}
                             </div>
                             <div className={cn(
-                              "p-4 rounded-2xl text-sm leading-relaxed group relative",
+                              "p-3 md:p-4 rounded-2xl text-xs md:text-sm leading-relaxed group relative",
                               msg.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-slate-50 text-slate-700 rounded-tl-none border border-slate-100"
                             )}>
                               <Markdown>{msg.content}</Markdown>
@@ -2752,22 +2775,22 @@ export default function App() {
                                   className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/80 border border-slate-200 text-slate-400 opacity-0 group-hover:opacity-100 transition-all hover:text-indigo-600 hover:border-indigo-200 shadow-sm"
                                   title="复制内容"
                                 >
-                                  {copiedId === idx ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                                  {copiedId === idx ? <Check className="size-3 md:size-[14px] text-emerald-500" /> : <Copy className="size-3 md:size-[14px]" />}
                                 </button>
                               )}
                             </div>
                           </div>
                         ))}
                         {isAILoading && (
-                          <div className="flex items-start gap-4">
-                            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-indigo-600 animate-pulse">
-                              <Bot size={20} />
+                          <div className="flex items-start gap-2 md:gap-4">
+                            <div className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg md:rounded-xl flex items-center justify-center text-indigo-600 animate-pulse">
+                              <Bot className="size-4 md:size-5" />
                             </div>
-                            <div className="p-4 bg-slate-50 rounded-2xl rounded-tl-none border border-slate-100">
+                            <div className="p-3 md:p-4 bg-slate-50 rounded-2xl rounded-tl-none border border-slate-100">
                               <div className="flex gap-1">
-                                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
-                                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                                <div className="w-1 h-1 md:w-1.5 md:h-1.5 bg-indigo-400 rounded-full animate-bounce" />
+                                <div className="w-1 h-1 md:w-1.5 md:h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                                <div className="w-1 h-1 md:w-1.5 md:h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
                               </div>
                             </div>
                           </div>
@@ -2780,19 +2803,19 @@ export default function App() {
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: 10 }}
                               onClick={() => scrollToBottom()}
-                              className="sticky bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-indigo-100 text-indigo-600 px-4 py-2 rounded-full shadow-lg flex items-center gap-2 text-xs font-bold hover:bg-indigo-600 hover:text-white transition-all z-20"
+                              className="sticky bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm border border-indigo-100 text-indigo-600 px-3 md:px-4 py-1.5 md:py-2 rounded-full shadow-lg flex items-center gap-2 text-[10px] md:text-xs font-bold hover:bg-indigo-600 hover:text-white transition-all z-20"
                             >
-                              <ArrowDownCircle size={14} />
+                              <ArrowDownCircle className="size-3 md:size-[14px]" />
                               新消息，点击下滑
                             </motion.button>
                           )}
                         </AnimatePresence>
                       </div>
-                      <div className="p-6 bg-white border-t border-slate-100">
-                        <div className="flex gap-3">
+                      <div className="p-4 md:p-6 bg-white border-t border-slate-100">
+                        <div className="flex gap-2 md:gap-3">
                           <input 
                             type="text" 
-                            className="input-field" 
+                            className="input-field py-2 md:py-3" 
                             placeholder={`向 ${activeAIModel.name} 提问...`}
                             value={aiInput}
                             onChange={(e) => setAiInput(e.target.value)}
@@ -2801,9 +2824,9 @@ export default function App() {
                           <button 
                             onClick={handleSendMessage}
                             disabled={isAILoading || !aiInput.trim()}
-                            className="btn-primary p-4 shrink-0"
+                            className="btn-primary p-2 md:p-4 shrink-0"
                           >
-                            <Send size={20} />
+                            <Send className="size-[18px] md:size-5" />
                           </button>
                         </div>
                       </div>
@@ -2827,7 +2850,7 @@ export default function App() {
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg glass p-8 rounded-[2rem] shadow-2xl"
+              className="relative w-full max-w-lg glass p-6 md:p-8 rounded-[2rem] shadow-2xl"
             >
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">
@@ -2991,7 +3014,7 @@ export default function App() {
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg glass p-8 rounded-[2rem] shadow-2xl"
+              className="relative w-full max-w-lg glass p-6 md:p-8 rounded-[2rem] shadow-2xl"
             >
               <h2 className="text-2xl font-bold mb-6">{editingAIModel.id ? '编辑 AI 模型' : '添加 AI 模型'}</h2>
               <div className="space-y-4">
@@ -3138,7 +3161,7 @@ function BookmarkCard({ bookmark, onDelete, onEdit, onOpenFolder }: { bookmark: 
       whileHover={{ y: -8 }}
       onClick={isFolder ? onOpenFolder : undefined}
       className={cn(
-        "group relative bg-white rounded-2xl md:rounded-[2rem] p-4 md:p-6 transition-all duration-500 border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10",
+        "group relative bg-white rounded-2xl md:rounded-[2rem] p-3 md:p-6 transition-all duration-500 border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10",
         isFolder ? "cursor-pointer bg-gradient-to-br from-indigo-50/30 to-white" : ""
       )}
     >
