@@ -116,6 +116,7 @@ export const loadConfig = (): StorageConfig => {
   const data = localStorage.getItem(CONFIG_KEY);
   const config = data ? JSON.parse(data) : { 
     type: 'local', 
+    theme: 'light',
     aiModels: [],
     aiPermissions: { profile: true, files: true, bookmarks: true, listRepos: true }
   };

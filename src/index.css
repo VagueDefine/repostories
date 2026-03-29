@@ -2,43 +2,140 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-brand: #6366f1; /* Indigo 500 */
-  --color-brand-hover: #4f46e5; /* Indigo 600 */
+  --color-brand: var(--accent-color, #6366f1);
+  --color-brand-hover: var(--accent-hover, #4f46e5);
+
+  /* Theme-aware color overrides */
+  --color-slate-50: var(--bg-app-soft, #f8fafc);
+  --color-slate-100: var(--border-color, #f1f5f9);
+  --color-slate-200: var(--border-color-dark, #e2e8f0);
+  --color-slate-400: var(--text-secondary, #94a3b8);
+  --color-slate-500: var(--text-secondary, #64748b);
+  --color-slate-600: var(--text-secondary, #475569);
+  --color-slate-800: var(--text-primary, #1e293b);
+  --color-slate-900: var(--text-primary, #0f172a);
+
+  --color-indigo-50: var(--accent-soft, #eef2ff);
+  --color-indigo-100: var(--accent-soft-dark, #e0e7ff);
+  --color-indigo-600: var(--accent-color, #4f46e5);
+  --color-indigo-700: var(--accent-hover, #4338ca);
+}
+
+:root {
+  --bg-app: #fafafa;
+  --bg-app-soft: #f8fafc;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --card-bg: #ffffff;
+  --border-color: #f1f5f9;
+  --border-color-dark: #e2e8f0;
+  --accent-color: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
+  --accent-soft-dark: #e0e7ff;
+}
+
+.theme-dark {
+  --bg-app: #0f172a;
+  --bg-app-soft: #1e293b;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --card-bg: #1e293b;
+  --border-color: #334155;
+  --border-color-dark: #475569;
+  --accent-color: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-soft: #1e1b4b;
+  --accent-soft-dark: #312e81;
+}
+
+.theme-sepia {
+  --bg-app: #f4ecd8;
+  --bg-app-soft: #f5ebd1;
+  --text-primary: #5b4636;
+  --text-secondary: #8c7355;
+  --card-bg: #fdf6e3;
+  --border-color: #e6d5b8;
+  --border-color-dark: #d5c4a1;
+  --accent-color: #d35400;
+  --accent-hover: #e67e22;
+  --accent-soft: #fcf3cf;
+  --accent-soft-dark: #f9e79f;
+}
+
+.theme-ocean {
+  --bg-app: #0c1b33;
+  --bg-app-soft: #14284b;
+  --text-primary: #e0f2fe;
+  --text-secondary: #7dd3fc;
+  --card-bg: #14284b;
+  --border-color: #1e3a8a;
+  --border-color-dark: #1e40af;
+  --accent-color: #0ea5e9;
+  --accent-hover: #38bdf8;
+  --accent-soft: #0c4a6e;
+  --accent-soft-dark: #075985;
 }
 
 @layer base {
   body {
-    @apply bg-[#fafafa] text-slate-900 antialiased;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    @apply antialiased transition-colors duration-300;
   }
 }
 
 @layer components {
   .glass {
-    @apply bg-white/80 backdrop-blur-xl border border-slate-200/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)];
+    background-color: color-mix(in srgb, var(--card-bg) 80%, transparent);
+    @apply backdrop-blur-xl border transition-all duration-300;
+    border-color: var(--border-color);
   }
   
   .glass-dark {
-    @apply bg-slate-900/80 backdrop-blur-xl border border-slate-700/30 shadow-2xl;
+    background-color: color-mix(in srgb, var(--card-bg) 80%, transparent);
+    @apply backdrop-blur-xl border transition-all duration-300;
+    border-color: var(--border-color);
   }
 
   .btn-primary {
-    @apply px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl transition-all duration-300 shadow-lg shadow-indigo-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed font-semibold;
+    background-color: var(--accent-color);
+    @apply px-6 py-3 text-white rounded-2xl transition-all duration-300 shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed font-semibold;
+    box-shadow: 0 10px 15px -3px color-mix(in srgb, var(--accent-color) 30%, transparent);
+  }
+
+  .btn-primary:hover {
+    background-color: var(--accent-hover);
   }
 
   .btn-secondary {
-    @apply px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-2xl hover:bg-slate-50 transition-all active:scale-95;
+    background-color: var(--card-bg);
+    border-color: var(--border-color-dark);
+    color: var(--text-secondary);
+    @apply px-4 py-2 border rounded-2xl transition-all active:scale-95;
+  }
+
+  .btn-secondary:hover {
+    @apply opacity-80;
   }
 
   .input-field {
-    @apply w-full px-4 py-3 bg-slate-50/50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all placeholder:text-slate-400;
+    background-color: var(--bg-app-soft);
+    border-color: var(--border-color-dark);
+    color: var(--text-primary);
+    @apply w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 transition-all placeholder:text-slate-400;
+    --tw-ring-color: color-mix(in srgb, var(--accent-color) 20%, transparent);
   }
 
   .nav-item-active {
-    @apply bg-indigo-600 text-white shadow-xl shadow-indigo-500/30;
+    background-color: var(--accent-color);
+    color: white;
+    box-shadow: 0 20px 25px -5px color-mix(in srgb, var(--accent-color) 30%, transparent);
   }
 
   .nav-item-inactive {
-    @apply text-slate-500 hover:bg-indigo-50 hover:text-indigo-600;
+    color: var(--text-secondary);
+    @apply hover:opacity-80 transition-all;
   }
 }
 

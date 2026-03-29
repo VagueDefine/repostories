@@ -27,6 +27,7 @@ export interface AIPermissions {
 
 export interface StorageConfig {
   type: 'local' | 'github';
+  theme?: 'light' | 'dark' | 'sepia' | 'ocean';
   github?: {
     token: string;
     repo: string;
